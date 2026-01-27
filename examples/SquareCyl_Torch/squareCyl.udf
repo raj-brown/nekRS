@@ -1,0 +1,116 @@
+//
+// nekRS User Defined File
+//
+#include "udf.hpp"
+#include <torch/torch.h>
+#include <torch/script.h>
+#include <typeinfo>
+
+#ifdef __okl__
+#include "squareCyl.oudf"
+#endif
+
+
+deviceMemory<dfloat> o_gradU;
+deviceMemory<dfloat> o_u;
+
+const int Nepochs=10;
+
+/* PyTorch Model
+ */ 
+struct Net:torch::nn::Module{
+  torch::nn::Linear fc1{nullptr}, fc2{nullptr};
+
+  Net(){
+    fc1 = register_module("fc1", torch::nn::Linear(9, 64));
+    fc2 = register_module("fc2", torch::nn::Linear(64, 9));
+  }
+
+  torch::Tensor forward(torch::Tensor x) {
+    x = torch::relu(fc1->forward(x));
+    x = fc2->forward(x);
+    return x;
+  }
+};
+
+
+
+
+void useric(nrs_t *nrs)
+{
+  auto mesh = nrs->meshV;
+  std::vector<dfloat> U(mesh->dim * nrs->fieldOffset, 0.0);
+  dfloat ux = 1.0;
+  if (platform->options.getArgs("RESTART FILE NAME").empty()) {
+    auto [x, y, z] = mesh->xyzHost();
+    for (int i = 1; i < mesh->Nlocal; i++) {
+      U[i + 0 * nrs->fieldOffset] = ux;
+      U[i + 1 * nrs->fieldOffset] = 0.0;
+      U[i + 2 * nrs->fieldOffset] = 0.0;
+    }
+    nrs->fluid->o_solution().copyFrom(U.data(), U.size());
+   }
+}
+
+
+
+void userf(double time){
+  auto mesh = nrs->meshV;
+  auto o_FUz = nrs->fluid->o_EXT + 2 * nrs->fieldOffset;
+  platform->linAlg->fill(mesh->Nlocal, 0.0, o_FUz);
+  std::cout << "Forcing is executed: " << nrs->fluid->o_EXT.size() <<  std::endl;
+}
+
+
+void UDF_Setup0(MPI_Comm comm, setupAide &options)
+{
+  std::cout<< "No Steup Zero!"<< std::endl;
+}
+
+
+void UDF_Setup()
+{
+  useric(nrs);
+  nrs->userSource = &userf;
+  o_gradU.resize(9 * nrs->fieldOffset);
+  for (int i=0; i<9; i++) {
+    const auto sid = scalarDigitStr(i);
+    auto o_utmp = o_gradU.slice(i * nrs->fieldOffset , nrs->meshV->Nlocal);
+    nrs->addUserCheckpointField("scalar"+sid, std::vector<deviceMemory<dfloat>>{o_utmp});
+  }
+}
+
+void UDF_ExecuteStep(dfloat time, int tstep){
+  auto mesh = nrs->meshV;
+if (nrs->checkpointStep) {
+  opSEM::strongGradVec(mesh, nrs->fieldOffset, nrs->fluid->o_U, o_gradU);
+  torch::Device device(torch::kCUDA);
+  auto x_data = torch::rand({100, 9}).to(device);
+  auto y_data = torch::rand({100, 9}).to(device);
+  std::cout << "Tensor x is on device: " << x_data.device() << std::endl;
+  std::cout << "Tensor y is on device: " << y_data.device() << std::endl;
+
+  auto model = std::make_shared<Net>();
+  model->to(device);
+  torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(1e-3));
+  torch::nn::MSELoss loss_fn;
+
+  for (int epoch=0; epoch<=Nepochs; ++epoch){
+    model->train();
+    auto output = model->forward(x_data);
+    auto loss = loss_fn(output, y_data);
+    optimizer.zero_grad();
+    loss.backward();
+    optimizer.step();
+    std::cout << "Loss:" << loss.item().toFloat() << std::endl;
+  }
+
+  std::cout << "Grad size: " << o_gradU.size() << std::endl;
+  std::cout << "Var size: " <<  nrs->fluid->o_U.size() << std::endl;
+  std::cout << "Field offset: " <<  nrs->fieldOffset << std::endl;
+  std::cout << "Quad offset: " <<  nrs->meshV->Nlocal << std::endl;
+  std::cout << "Dimension of Mesh:" << mesh->dim<< std::endl;
+  }
+}
+
+

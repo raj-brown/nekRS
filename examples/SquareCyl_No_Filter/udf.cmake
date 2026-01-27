@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.21)
+set (CMAKE_CXX_STANDARD 17)
+list(APPEND CMAKE_PREFIX_PATH /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/3rd_party/pytorch/libtorch/)
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+target_link_libraries(udf PRIVATE "${TORCH_LIBRARIES}")

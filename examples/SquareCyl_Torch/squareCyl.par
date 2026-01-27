@@ -1,0 +1,31 @@
+[GENERAL]
+verbose = false
+polynomialOrder = 5
+stopAt = numSteps
+#numSteps = 100001
+numSteps = 5
+
+dt=1e-03
+timeStepper = tombo2
+advectionSubCyclingSteps = 2
+
+#writeControl = simulationTime 
+writeControl = steps
+writeInterval = 1
+
+
+regularization = hpfrt + nModes=2 + scalingCoeff=10
+#regularization = avm + hpfresidual + vismaxcoeff=0.02 + scalingcoeff=0.1
+#regularization = hpfrt + nModes=1 + scalingCoeff=10
+
+[FLUID PRESSURE]
+residualTol = 1e-06
+
+[FLUID VELOCITY]
+boundaryTypeMap = zeroDirichlet,udfDirichlet,zeroNeumann
+viscosity = 1/2000
+density = 1.0
+residualTol = 1e-06
+
+
+

@@ -1,0 +1,12 @@
+// Boundary conditions
+void udfDirichlet(bcData *bc)
+{
+  if (isField("fluid velocity")){
+      bc->uxFluid = 1.0;
+      bc->uyFluid = 0.0;
+      bc->uzFluid = 0.0;
+  }
+}
+
+
+
