@@ -12,3 +12,4 @@ logfile
 *.dat
 .cache/
 3rd_party/libtorch/
+squareCyl0.f*
