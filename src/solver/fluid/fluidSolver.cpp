@@ -6,7 +6,7 @@
 #include "nekInterfaceAdapter.hpp"
 
 fluidSolver_t::fluidSolver_t(const fluidSolverCfg_t &cfg, const std::unique_ptr<geomSolver_t> &_geom)
-    : geom(_geom)
+  : geom(_geom)
 {
   name = cfg.name;
 
@@ -36,6 +36,7 @@ fluidSolver_t::fluidSolver_t(const fluidSolverCfg_t &cfg, const std::unique_ptr<
   dt = cfg.dt;
   o_coeffEXT = cfg.o_coeffEXT;
   o_coeffBDF = cfg.o_coeffBDF;
+
 
   nameToIndex["x"] = 0;
   nameToIndex["y"] = 1;

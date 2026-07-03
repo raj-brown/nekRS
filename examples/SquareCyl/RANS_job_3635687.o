@@ -1,0 +1,272 @@
+## SLURM PROLOG ###############################################################
+##    Job ID : 3635687
+##  Job Name : NEKRS_LES
+##  Nodelist : gpu2701
+##      CPUs : 1
+##  Mem/Node : 65536 MB
+## Directory : /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/SquareCyl
+##   Job Started : Fri Jul  3 01:45:46 PM EDT 2026
+###############################################################################
+reading squareCyl.par
+UTC time: Fri Jul  3 17:45:50 2026
+
+███    ██ ███████ ██   ██ ██████  ███████
+████   ██ ██      ██  ██  ██   ██ ██     
+██ ██  ██ █████   █████   ██████  ███████
+██  ██ ██ ██      ██  ██  ██   ██      ██
+██   ████ ███████ ██   ██ ██   ██ ███████
+(c) 2019-2025 UCHICAGO ARGONNE, LLC
+v25.0.2 (sha:a70a3ac4)
+
+default FP precision: 64
+MPI tasks: 1
+
+general::writecontrol is deprecated and might be removed in the future!
+general::writeinterval is deprecated and might be removed in the future!
+Initializing device 
+active occa mode: CUDA
+
+detected device atomic support
+ENABLE GS COMM OVERLAP disabled
+
+using NEKRS_HOME: /oscar/data/gk/kshukla1/.local/nekrs
+using NEKRS_CACHE_DIR: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/SquareCyl/.cache
+using OCCA_CACHE_DIR: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/SquareCyl/.cache/occa/
+
+building nekInterface for lx1=6, lelt=93865, lelg=93864 ...
+done (66.2046s)
+loading nek ... done
+No Steup Zero!
+
+<<< [GENERAL]
+<<< verbose = false
+<<< polynomialOrder = 5
+<<< stopAt = numSteps
+<<< numSteps = 100001
+<<< #numSteps = 12
+<<< #startFrom=squarecyl0.f33016
+<<< dt=1e-03
+<<< timeStepper = tombo2
+<<< advectionSubCyclingSteps = 2
+<<< 
+<<< #writeControl = simulationTime 
+<<< writeControl = steps
+<<< writeInterval = 100
+<<< 
+<<< 
+<<< regularization = hpfrt + nModes=2 + scalingCoeff=10
+<<< #regularization = avm + hpfresidual + vismaxcoeff=0.02 + scalingcoeff=0.1
+<<< #regularization = hpfrt + nModes=1 + scalingCoeff=10
+<<< 
+<<< [FLUID PRESSURE]
+<<< residualTol = 1e-06
+<<< 
+<<< [FLUID VELOCITY]
+<<< boundaryTypeMap = zeroDirichlet,udfDirichlet,zeroNeumann
+<<< viscosity = 1/2000
+<<< density = 1.0
+<<< residualTol = 1e-06
+<<< 
+<<< 
+<<< 
+
+<<< //
+<<< // nekRS User Defined File
+<<< //
+<<< #include "udf.hpp"
+<<< 
+<<< 
+<<< 
+<<< 
+<<< void useric(nrs_t *nrs)
+<<< {
+<<<   auto mesh = nrs->meshV;
+<<<   std::vector<dfloat> U(mesh->dim * nrs->fieldOffset, 0.0);
+<<<   dfloat ux = 1.0;
+<<<   if (platform->options.getArgs("RESTART FILE NAME").empty()) {
+<<<     auto [x, y, z] = mesh->xyzHost();
+<<<     for (int i = 1; i < mesh->Nlocal; i++) {
+<<<       U[i + 0 * nrs->fieldOffset] = ux;
+<<<       U[i + 1 * nrs->fieldOffset] = 0.0;
+<<<       U[i + 2 * nrs->fieldOffset] = 0.0;
+<<<     }
+<<<     nrs->fluid->o_solution().copyFrom(U.data(), U.size());                                                                                                                                                                                                           }
+<<< }
+<<< 
+<<< void UDF_Setup0(MPI_Comm comm, setupAide &options)
+<<< {
+<<<   std::cout<< "No Steup Zero!"<< std::endl;
+<<< }
+<<< 
+<<< void UDF_Setup()
+<<< {
+<<<   useric(nrs);
+<<< }
+<<< 
+<<< void UDF_ExecuteStep(dfloat time, int tstep){
+<<<   mesh_t *mesh = nrs->meshV;
+<<<   if (nrs->checkpointStep) {
+<<<   std::cout << "At Step " << tstep << std::endl;
+<<<   }
+<<< }
+<<< 
+<<< 
+
+<<< #ifdef __okl__
+<<< #include "squareCyl.oudf"
+<<< #endif
+<<< #ifdef __okl__
+<<< void udfNeumann(bcData *bc){}
+<<< void udfRobin(bcData *bc){}
+<<< #endif
+
+JIT compiling kernels (this may take awhile if they are not in cache) ...
+done (233.391s)
+
+loading kernels ...
+loading udf kernels ... 
+done (0.0303953s)
+advSub: N=5 cubN=7 Nfields=3 wordSize=64 GDOF/s=20.2612 GB/s=1981.39 GFLOPS/s=9026.45 kernelVer=16
+advSub: N=5 cubN=7 Nfields=1 wordSize=64 GDOF/s=9.04434 GB/s=967.818 GFLOPS/s=4325.66 kernelVer=8
+Ax: Ndim=3 N=5 wordSize=64 wordSizeGeo=64 GDOF/s=37.5762 GB/s=2597.27 GFLOPS/s=6038.65 constCoeff=0 poisson=0 kernelVer=1
+Ax: N=5 wordSize=64 wordSizeGeo=64 GDOF/s=25.9786 GB/s=2873.03 GFLOPS/s=3950.41 constCoeff=1 poisson=1 kernelVer=2
+Ax: N=5 wordSize=32 wordSizeGeo=32 GDOF/s=50.4204 GB/s=2788.05 GFLOPS/s=7667.13 constCoeff=1 poisson=1 kernelVer=9
+fdm: N=7 wordSize=32 GDOF/s=74.7929 GB/s=1507.2 GFLOPS/s=10829.5 kernelVer=4
+Ax: N=3 wordSize=32 wordSizeGeo=32 GDOF/s=34.5178 GB/s=2618.24 GFLOPS/s=5236.48 constCoeff=1 poisson=1 kernelVer=8
+fdm: N=5 wordSize=32 GDOF/s=71.7472 GB/s=1735.71 GFLOPS/s=9050.48 kernelVer=1
+done (103.421s)
+wdotp nFields=01 min/avg/max: 7.307e-04s 7.365e-04s 7.470e-04s  
+wdotp nFields=03 min/avg/max: 9.293e-04s 9.336e-04s 9.410e-04s  
+
+done (0.541117)
+ reading squareCyl.re2                                                                                                                       
+ hdr:#v003    93864  3    93864 this is the hdr                                      
+ reading mesh 
+   readp_re2_mesh:pack/cr/unpack : 0.96E+00 0.14E-01 0.17E-01
+   readp_re2_mesh:byte_read_mpi  : 0.13E-01
+ reading boundary faces                12574 for ifield   1
+   readp_re2_bc:pack/cr/unpack : 0.11E-02 0.27E-03 0.15E-02
+   readp_re2_bc:byte_read_mpi  : 0.18E-03
+ done :: read .re2 file     1.1     sec
+
+Running parCon ...
+parCon (tol = 2.000000e-01) finished in 2.19389 s
+Running parRSB ..., nv = 8, nelg = 93864
+PARRSB_PARTITIONER = 0
+PARRSB_TAGGED = 0
+PARRSB_LEVELS = 2
+PARRSB_FIND_DISCONNECTED_COMPONENTS = 0
+PARRSB_REPAIR = 0
+PARRSB_VERBOSE_LEVEL = 1
+PARRSB_PROFILE_LEVEL = 0
+PARRSB_RSB_ALGO = 0
+PARRSB_RSB_PRE = 1
+PARRSB_RSB_MAX_ITER = 50
+PARRSB_RSB_MAX_PASSES = 50
+PARRSB_RSB_TOL = 0.000010
+PARRSB_RSB_MG_GRAMMIAN = 0
+PARRSB_RSB_MG_FACTOR = 2
+load_balance: nelg = 93864
+load_balance: unit_size = 112 (rsb = 112, rcb = 48)
+initialize_levels: num_nodes = 1, num_ranks_per_node = 1
+initialize_levels: levels = 2
+parrsb_part_mesh_v0: levels requested = 2, levels enabled = 2
+parrsb_part_mesh_v0: running partitioner ...
+rsb: Level=1/2 number of cuts = 0
+rsb: Level=2/2 number of cuts = 0
+parrsb_part_mesh_v0: restore original input
+parRSB finished in 0.0205133 seconds.
+ reading mesh 
+   readp_re2_mesh:pack/cr/unpack : 0.95E+00 0.64E-02 0.98E-02
+   readp_re2_mesh:byte_read_mpi  : 0.39E-02
+ reading boundary faces                12574 for ifield   1
+   readp_re2_bc:pack/cr/unpack : 0.11E-02 0.28E-03 0.16E-02
+   readp_re2_bc:byte_read_mpi  : 0.16E-03
+ done :: read .re2 file    0.98     sec
+
+ setup mesh topology
+   Right-handed check complete for       93864 elements. OK.
+gs_setup: 0 unique labels shared
+   handle bytes (avg, min, max): 1.59352e+08 159351964 159351964
+   buffer bytes (avg, min, max): 0 0 0
+   setupds time 7.0398E+00 seconds   0  6     5772984       93864
+ 
+ 
+ max multiplicity           12
+ done :: setup mesh topology
+  
+ call usrdat
+ done :: usrdat
+
+ generate geometry data
+ done :: generate geometry data
+  
+ call usrdat2
+ done :: usrdat2
+
+  5.2009E-15  2.5833E-15  1.4655E-15  5.2009E-15  2.5833E-15  1.4655E-15 xyz repair 1
+  5.2221E-15  1.7764E-15  1.4655E-15  1.1805E-14  3.2571E-15  2.3561E-15 xyz repair 2
+  3.5527E-15  1.7764E-15  9.3788E-16  6.2707E-15  2.5761E-15  1.0993E-15 xyz repair 3
+  1.7137E-15  8.0692E-16  4.4409E-16  1.7137E-15  8.0692E-16  4.4409E-16 xyz repair 4
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+ verify mesh topology
+  -10.000000000000000        25.000000000000000       Xrange
+  -10.000000000000000        10.000000000000000       Yrange
+   0.0000000000000000        6.4000000000000004       Zrange
+ done :: verify mesh topology
+  
+ call usrdat3
+ done :: usrdat3
+
+ nek setup done in    3.9409E+01 s
+
+generating mesh ...
+loading mesh from nek ... Nelements: 93864, NboundaryIDs: 3, NboundaryFaces: 3792 done (0.0226628s)
+polynomial order N: 5, over-integration order cubN: 7
+meshParallelGatherScatterSetup N=5
+autotuning gs for wordSize=8 nFields=1 
+local: 2.5840e-04s (1325.1GB/s)
+autotuning gs for wordSize=8 nFields=3 
+local: 7.4787e-04s (1068.3GB/s)
+unique number of gridpoints: : 11780280
+ mesh metrics:
+ GLL grid spacing min/max    : 1.94E-03 6.72E-01
+ scaled Jacobian  min/max/avg: 1.89E-01 1.00E+00 8.52E-01
+ aspect ratio     min/max/avg: 1.08E+00 1.63E+01 6.49E+00
+
+================ SETUP FLUID ================
+Extrapolation Coefficient{
+  "mode": "CUDA"
+}
+
+bID 1 -> bcType zeroDirichlet
+bID 2 -> bcType udfDirichlet
+bID 3 -> bcType zeroNeumann
+setting IC ... 
+ useric for ifld            1
+copying solution from nek
+copying solution to nek
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+calling nek_userchk ...
+copying solution from nek
+calling UDF_Setup ... 
+copying solution to nek
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+done (14.28s)
+================= ELLIPTIC SETUP FLUID VELOCITY =================
+Nfields: 3
+autotuning gs for wordSize=8 nFields=3 
+local: 7.4804e-04s (1068.1GB/s)
+building Jacobi preconditioner ... done (0.163353s)
+done (0.982322s)
+================= ELLIPTIC SETUP FLUID PRESSURE =================
+Nfields: 1

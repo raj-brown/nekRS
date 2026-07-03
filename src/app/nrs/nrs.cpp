@@ -1627,7 +1627,7 @@ void nrs_t::initInnerStep(double time, dfloat _dt, int _tstep)
 {
   timePrevious = time;
   dt[0] = _dt;
-  nekrsCheck(dt[0] <= 0 || std::isnan(dt[0]) || std::isinf(dt[0]),
+  nekrsCheck((dt[0] <= 0 && !platform->options.compareArgs("ALLOW NEGATIVE DT", "TRUE")) || std::isnan(dt[0]) || std::isinf(dt[0]),
              MPI_COMM_SELF,
              EXIT_FAILURE,
              "%s",
@@ -2187,7 +2187,10 @@ void nrs_t::computeUrst()
   auto mesh = meshV;
   auto [fieldOffset, cubatureOffset, o_U, o_relUrst] = [&]() {
     if (fluid) {
-      return std::make_tuple(fluid->fieldOffset, fluid->cubatureOffset, fluid->o_U, fluid->o_relUrst);
+
+      auto &convel = (fluid->userAdjointConvection && fluid->o_Uadv.isInitialized()) ? fluid->o_Uadv : fluid->o_U;
+
+      return std::make_tuple(fluid->fieldOffset, fluid->cubatureOffset, convVel, fluid->o_relUrst);
     }
     if (scalar) {
       return std::make_tuple(scalar->fieldOffset(), scalar->vCubatureOffset, scalar->o_U, scalar->o_relUrst);

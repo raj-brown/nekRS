@@ -3,8 +3,8 @@ verbose = false
 polynomialOrder = 5
 stopAt = numSteps
 #numSteps = 100001
-numSteps = 5
-
+numSteps = 12
+#startFrom="squareCyl0.f00009"
 dt=1e-03
 timeStepper = tombo2
 advectionSubCyclingSteps = 2

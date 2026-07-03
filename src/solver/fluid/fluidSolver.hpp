@@ -35,6 +35,8 @@ private:
 
   occa::memory o_coeffEXTP;
 
+
+
 public:
   fluidSolver_t(const fluidSolverCfg_t &cfg, const std::unique_ptr<geomSolver_t> &geom);
 
@@ -134,6 +136,10 @@ public:
   occa::memory o_mue;
 
   occa::memory o_relUrst;
+
+  // Adjoint-mode extension
+  bool useAdjointConvection = false;
+  occa::memory o_Uadv;
 
   void finalize() override
   {

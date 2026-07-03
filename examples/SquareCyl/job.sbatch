@@ -1,14 +1,22 @@
 #!/bin/bash
-#SBATCH -J RANS_PINN
+#SBATCH -J NEKRS_LES
 #SBATCH -N 1
+#SBATCH -A gk-h100-gcondo
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --time=24:00:00
+#SBATCH --time=144:00:00
 #SBATCH --mem=64GB
-#SBATCH --partition=3090-gcondo
+#SBATCH --partition=h100-gcondo
 #SBATCH --gres=gpu:1
 #SBATCH -o RANS_job_%j.o
 #SBATCH -e RANS_job_%j.e
 
-module load hpcx-mpi/4.1.5rc2s-yflad4v cuda/12.4.0-piq32fy cmake/3.26.3-xi6h36u
-mpirun -np 1 nekrs --setup squareCyl.par
+
+
+export NEKRS_HOME=/oscar/data/gk/kshukla1/.local/nekrs
+export PATH=$NEKRS_HOME/bin:$PATH
+
+module load hpcx-mpi/2.25.1s-le4f
+module load cuda/12.9.0-cinr
+
+srun --mpi=pmix nekrs --setup squareCyl.par

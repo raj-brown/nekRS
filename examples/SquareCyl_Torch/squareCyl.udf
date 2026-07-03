@@ -11,8 +11,7 @@
 #endif
 
 
-deviceMemory<dfloat> o_gradU;
-deviceMemory<dfloat> o_u;
+
 
 const int Nepochs=10;
 
@@ -33,6 +32,12 @@ struct Net:torch::nn::Module{
   }
 };
 
+
+
+deviceMemory<dfloat> o_gradU;
+deviceMemory<dfloat> o_u;
+deviceMemory<dfloat> o_hkj;
+static std::shared_ptr<Net> model;
 
 
 
@@ -61,6 +66,44 @@ void userf(double time){
   std::cout << "Forcing is executed: " << nrs->fluid->o_EXT.size() <<  std::endl;
 }
 
+void closureSource(double time){
+
+  mesh_t *mesh = nrs->meshV;
+  dlong Ntotal = nrs->fluid->fieldOffset;
+  occa::memory &o_U  = nrs->fluid->o_U;
+  opSEM::strongGradVec(mesh, nrs->fieldOffset, o_U, o_gradU, true);
+
+  dfloat *gradU_ptr = static_cast<dfloat*>(o_gradU.ptr());
+
+  auto tensorOpts = torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCUDA).requires_grad(false);
+
+  torch::Tensor z = torch::from_blob(gradU_ptr, {9, Ntotal}, tensorOpts).t().contiguous();
+
+  torch::Tensor h_kj;
+  {
+    torch::NoGradGuard no_grad;
+    h_kj = model->forward(z);
+  }
+
+  torch::Tensor h_kj_T = h_kj.t().contiguous();
+  o_hkj.copyFrom(h_kj_T.data_ptr<double>(), 9*Ntotal);
+  
+
+  for (int i=0; i < 3; ++i){
+    auto o_row_i = o_hkj.slice(i*3*Ntotal, 3*Ntotal);
+
+    occa::memory o_div_i = opSEM::strongDivergence(mesh, Ntotal, o_row_i, true);
+    occa::memory o_EXT_i = nrs->fluid->o_EXT.slice(i * Ntotal, Ntotal);
+
+    platform->linAlg->axpby(Ntotal, -1.0, o_div_i, 1.0, o_EXT_i);
+
+    o_div_i.free();
+  }
+
+  platform->device.finish();
+
+}
+
 
 void UDF_Setup0(MPI_Comm comm, setupAide &options)
 {
@@ -71,39 +114,75 @@ void UDF_Setup0(MPI_Comm comm, setupAide &options)
 void UDF_Setup()
 {
   useric(nrs);
-  nrs->userSource = &userf;
-  o_gradU.resize(9 * nrs->fieldOffset);
+  nrs->userSource = &closureSource;
+  dlong Ntotal = nrs->fieldOffset;
+  o_gradU.resize(9 * Ntotal);
+  o_hkj.resize(9 * Ntotal);
+
   for (int i=0; i<9; i++) {
     const auto sid = scalarDigitStr(i);
     auto o_utmp = o_gradU.slice(i * nrs->fieldOffset , nrs->meshV->Nlocal);
     nrs->addUserCheckpointField("scalar"+sid, std::vector<deviceMemory<dfloat>>{o_utmp});
   }
-}
+
+  model = std::make_shared<Net>();
+  model->to(torch::kCUDA);
+  //model->to(torch::kFloat64);
+  std::ifstream checkFile("model.pt");
+  if (checkFile.good()){
+      torch::load(model, "model.pt");
+
+      if (platform->comm.mpiRank() == 0){
+        printf("nekRS: Loaded weights from model.pt\n");
+        }
+        else {
+          if (platform->comm.mpiRank() == 0){
+            printf("nekRS: No Checkpoints - random weights\n");
+            }
+        }
+
+        model->to(torch::kCUDA);
+        model->to(torch::kFloat64);
+
+
+
+
+
+  }
+
+    printf("nekRS: ClosureNet loaded on CUDA device\n");
+  }
+
+
+
 
 void UDF_ExecuteStep(dfloat time, int tstep){
   auto mesh = nrs->meshV;
 if (nrs->checkpointStep) {
   opSEM::strongGradVec(mesh, nrs->fieldOffset, nrs->fluid->o_U, o_gradU);
   torch::Device device(torch::kCUDA);
+
   auto x_data = torch::rand({100, 9}).to(device);
   auto y_data = torch::rand({100, 9}).to(device);
   std::cout << "Tensor x is on device: " << x_data.device() << std::endl;
   std::cout << "Tensor y is on device: " << y_data.device() << std::endl;
 
-  auto model = std::make_shared<Net>();
-  model->to(device);
-  torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(1e-3));
-  torch::nn::MSELoss loss_fn;
+  //auto model = std::make_shared<Net>();
+  //model->to(device);
+  //torch::optim::Adam optimizer(model->parameters(), torch::optim::AdamOptions(1e-3));
+  //torch::nn::MSELoss loss_fn;
 
-  for (int epoch=0; epoch<=Nepochs; ++epoch){
-    model->train();
-    auto output = model->forward(x_data);
-    auto loss = loss_fn(output, y_data);
-    optimizer.zero_grad();
-    loss.backward();
-    optimizer.step();
-    std::cout << "Loss:" << loss.item().toFloat() << std::endl;
-  }
+  //for (int epoch=0; epoch<=Nepochs; ++epoch){
+  //  model->train();
+  //  auto output = model->forward(x_data);
+  //  auto loss = loss_fn(output, y_data);
+  //  optimizer.zero_grad();
+  //  loss.backward();
+  //  optimizer.step();
+  //  std::cout << "Loss:" << loss.item().toFloat() << std::endl;
+  //}
+
+  //torch::save(model, "model.pt");
 
   std::cout << "Grad size: " << o_gradU.size() << std::endl;
   std::cout << "Var size: " <<  nrs->fluid->o_U.size() << std::endl;

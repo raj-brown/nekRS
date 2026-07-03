@@ -1,27 +1,29 @@
 [GENERAL]
 verbose = false
-polynomialOrder = 4
+polynomialOrder = 5
 stopAt = numSteps
 numSteps = 100001
-
-dt = 1e-3
+#numSteps = 12
+#startFrom=squarecyl0.f33016
+dt=1e-03
 timeStepper = tombo2
-subCyclingSteps = 2
+advectionSubCyclingSteps = 2
 
 #writeControl = simulationTime 
 writeControl = steps
-writeInterval = 1000
+writeInterval = 100
+
 
 regularization = hpfrt + nModes=2 + scalingCoeff=10
 #regularization = avm + hpfresidual + vismaxcoeff=0.02 + scalingcoeff=0.1
+#regularization = hpfrt + nModes=1 + scalingCoeff=10
 
-
-[PRESSURE]
+[FLUID PRESSURE]
 residualTol = 1e-06
 
-[VELOCITY]
-boundaryTypeMap = wall, inlet, outlet
-viscosity = -2000
+[FLUID VELOCITY]
+boundaryTypeMap = zeroDirichlet,udfDirichlet,zeroNeumann
+viscosity = 1/2000
 density = 1.0
 residualTol = 1e-06
 

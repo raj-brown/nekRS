@@ -2,9 +2,6 @@
 // nekRS User Defined File
 //
 #include "udf.hpp"
-#include <torch/torch.h>
-#include <torch/script.h>
-
 
 #ifdef __okl__
 #include "squareCyl.oudf"
@@ -20,15 +17,11 @@ void useric(nrs_t *nrs)
   if (platform->options.getArgs("RESTART FILE NAME").empty()) {
     auto [x, y, z] = mesh->xyzHost();
     for (int i = 1; i < mesh->Nlocal; i++) {
-      std::cout << "x is: " << x[i] << std::endl;
-      std::cout << "y is: " << y[i] << std::endl;
-      std::cout << "z is: " << z[i] << std::endl;
       U[i + 0 * nrs->fieldOffset] = ux;
       U[i + 1 * nrs->fieldOffset] = 0.0;
       U[i + 2 * nrs->fieldOffset] = 0.0;
     }
-    nrs->o_U.copyFrom(U.data(), U.size());
-  }
+    nrs->fluid->o_solution().copyFrom(U.data(), U.size());                                                                                                                                                                                                           }
 }
 
 void UDF_Setup0(MPI_Comm comm, setupAide &options)
