@@ -1416,3 +1416,11 @@ c     add an U_n coefficient to H2
       return
       end
 c-----------------------------------------------------------------------
+      block data adj_data
+      include 'SIZE'
+      include 'ADJOINT'
+      data ifadj /.false./
+      data npassadj /0/, maxpassadj /0/
+      data endtime /0.0/, adjtol /0.0/, alpha_max /0.0/
+      end block data
+

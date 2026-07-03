@@ -526,18 +526,18 @@ void nrs_t::restartFromFiles(const std::vector<std::string> &fileList)
       return found;
     }();
 
-/*    auto hRefine = [&]() {
-      auto it = std::find_if(options.begin(), options.end(), [](const std::string &s) {
-        return s.find("href") != std::string::npos;
-      });
+    /*    auto hRefine = [&]() {
+          auto it = std::find_if(options.begin(), options.end(), [](const std::string &s) {
+            return s.find("href") != std::string::npos;
+          });
 
-      std::string val;
-      if (it != options.end()) {
-        val = serializeString(*it, '=').at(1);
-        options.erase(it);
-      }
-      return val;
-    }();*/
+          std::string val;
+          if (it != options.end()) {
+            val = serializeString(*it, '=').at(1);
+            options.erase(it);
+          }
+          return val;
+        }();*/
 
     const auto requestedFields = [&]() {
       std::vector<std::string> flds;
@@ -1627,7 +1627,8 @@ void nrs_t::initInnerStep(double time, dfloat _dt, int _tstep)
 {
   timePrevious = time;
   dt[0] = _dt;
-  nekrsCheck((dt[0] <= 0 && !platform->options.compareArgs("ALLOW NEGATIVE DT", "TRUE")) || std::isnan(dt[0]) || std::isinf(dt[0]),
+  nekrsCheck((dt[0] <= 0 && !platform->options.compareArgs("ALLOW NEGATIVE DT", "TRUE")) ||
+                 std::isnan(dt[0]) || std::isinf(dt[0]),
              MPI_COMM_SELF,
              EXIT_FAILURE,
              "%s",
@@ -2188,7 +2189,8 @@ void nrs_t::computeUrst()
   auto [fieldOffset, cubatureOffset, o_U, o_relUrst] = [&]() {
     if (fluid) {
 
-      auto &convel = (fluid->userAdjointConvection && fluid->o_Uadv.isInitialized()) ? fluid->o_Uadv : fluid->o_U;
+      auto &convVel =
+          (fluid->useAdjointConvection && fluid->o_Uadv.isInitialized()) ? fluid->o_Uadv : fluid->o_U;
 
       return std::make_tuple(fluid->fieldOffset, fluid->cubatureOffset, convVel, fluid->o_relUrst);
     }

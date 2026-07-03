@@ -7,7 +7,12 @@ left:= (
 right:= )
 USR_LFLAGS_:=$(shell echo $(USR_LFLAGS) | sed -E "s@-L$(left)[^ ]+$(right)@-Wl,-rpath,\1 -L\1@g")
 
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+NI_LDFLAGS = $(LDFLAGS) -Wl,-rpath,. -Wl,-force_load,$(OBJDIR)/libnek5000.a -ldl $(USR_LFLAGS_)
+else
 NI_LDFLAGS = $(LDFLAGS) -Wl,-rpath,. -L$(OBJDIR) -lnek5000 -ldl $(USR_LFLAGS_)
+endif
 
 $(OBJDIR)/nekInterface.o: $(NEKRS_NEKINTERFACE_DIR)/nekInterface.f $(LIB) 
 	$(FC) -c $(FL2) $< -o $@ 
