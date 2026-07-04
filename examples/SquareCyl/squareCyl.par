@@ -1,6 +1,6 @@
 [GENERAL]
 verbose = false
-polynomialOrder = 5
+polynomialOrder = 6
 stopAt = numSteps
 numSteps = 100001
 #numSteps = 12
@@ -14,7 +14,7 @@ writeControl = steps
 writeInterval = 100
 
 
-regularization = hpfrt + nModes=2 + scalingCoeff=10
+regularization = hpfrt + nModes=1 + scalingCoeff=0.1
 #regularization = avm + hpfresidual + vismaxcoeff=0.02 + scalingcoeff=0.1
 #regularization = hpfrt + nModes=1 + scalingCoeff=10
 

@@ -1,0 +1,36 @@
+## SLURM PROLOG ###############################################################
+##    Job ID : 3642014
+##  Job Name : NEKRS_LES
+##  Nodelist : gpu2701
+##      CPUs : 1
+##  Mem/Node : 65536 MB
+## Directory : /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/SquareCyl
+##   Job Started : Sat Jul  4 12:34:39 AM EDT 2026
+###############################################################################
+reading squareCyl.par
+UTC time: Sat Jul  4 04:34:43 2026
+
+███    ██ ███████ ██   ██ ██████  ███████
+████   ██ ██      ██  ██  ██   ██ ██     
+██ ██  ██ █████   █████   ██████  ███████
+██  ██ ██ ██      ██  ██  ██   ██      ██
+██   ████ ███████ ██   ██ ██   ██ ███████
+(c) 2019-2025 UCHICAGO ARGONNE, LLC
+v25.0.2 (sha:a70a3ac4)
+
+default FP precision: 64
+MPI tasks: 1
+
+general::writecontrol is deprecated and might be removed in the future!
+general::writeinterval is deprecated and might be removed in the future!
+Initializing device 
+active occa mode: CUDA
+
+detected device atomic support
+ENABLE GS COMM OVERLAP disabled
+
+using NEKRS_HOME: /oscar/data/gk/kshukla1/.local/nekrs
+using NEKRS_CACHE_DIR: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/SquareCyl/.cache
+using OCCA_CACHE_DIR: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/SquareCyl/.cache/occa/
+
+building nekInterface for lx1=7, lelt=93865, lelg=93864 ...
