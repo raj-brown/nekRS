@@ -1,0 +1,51 @@
+// combined.oudf
+// GPU kernel for adjoint transpose term: (grad ubar)^T uhat
+//
+// Math: term_i = sum_j d(ubar_j)/d(xi) * uhat_j
+//
+// gradUBar layout [9 x fieldOffset]:
+//   row 0: d ux/dx, d ux/dy, d ux/dz  (components 0,1,2)
+//   row 1: d uy/dx, d uy/dy, d uy/dz  (components 3,4,5)
+//   row 2: d uz/dx, d uz/dy, d uz/dz  (components 6,7,8)
+//
+// uhat layout [3 x fieldOffset]:
+//   uhat_x = uhat[n + 0*fieldOffset]
+//   uhat_y = uhat[n + 1*fieldOffset]
+//   uhat_z = uhat[n + 2*fieldOffset]
+//
+// term layout [3 x fieldOffset] (output):
+//   term_x = d ux/dx * ux + d uy/dx * uy + d uz/dx * uz
+//   term_y = d ux/dy * ux + d uy/dy * uy + d uz/dy * uz
+//   term_z = d ux/dz * ux + d uy/dz * uy + d uz/dz * uz
+@kernel void transposeterm(const dlong N,
+                           const dlong fieldoffset,
+                           @ restrict const dfloat *gradUBar,
+                           @ restrict const dfloat *uhat,
+                           @ restrict dfloat *term)
+{
+  for (dlong n = 0; n < N; ++n; @tile(256, @outer, @inner)) {
+    const dlong n0 = n + 0 * fieldoffset;
+    const dlong n1 = n + 1 * fieldoffset;
+    const dlong n2 = n + 2 * fieldoffset;
+
+    const dfloat ux = uhat[n0];
+    const dfloat uy = uhat[n1];
+    const dfloat uz = uhat[n2];
+
+    const dfloat dux_dx = gradUBar[n + 0 * fieldoffset];
+    const dfloat dux_dy = gradUBar[n + 1 * fieldoffset];
+    const dfloat dux_dz = gradUBar[n + 2 * fieldoffset];
+
+    const dfloat duy_dx = gradUBar[n + 3 * fieldoffset];
+    const dfloat duy_dy = gradUBar[n + 4 * fieldoffset];
+    const dfloat duy_dz = gradUBar[n + 5 * fieldoffset];
+
+    const dfloat duz_dx = gradUBar[n + 6 * fieldoffset];
+    const dfloat duz_dy = gradUBar[n + 7 * fieldoffset];
+    const dfloat duz_dz = gradUBar[n + 8 * fieldoffset];
+
+    term[n0] = dux_dx * ux + duy_dx * uy + duz_dx * uz;
+    term[n1] = dux_dy * ux + duy_dy * uy + duz_dy * uz;
+    term[n2] = dux_dz * ux + duy_dz * uy + duz_dz * uz;
+  }
+}

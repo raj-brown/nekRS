@@ -1,0 +1,246 @@
+// ═══════════════════════════════════════════════════════════════
+// dlLES.udf
+// Single UDF for both Forward and Adjoint solve.
+// Mode switch:    userParam01  (0 = forward, 1 = adjoint)
+// DNS end step:   userParam02  (forward mode only — set by
+//                  main_training.cpp before each forward run)
+//
+// This file NEVER changes between samples/iterations/windows.
+// Requires nekRS source patch: fluidSolver_t::o_Uadv +
+//   useAdjointConvection flag (see patch notes), and the
+//   "ALLOW NEGATIVE DT" relaxation in nrs.cpp initInnerStep.
+//
+// NN architecture: gated/highway network, Eq. (2.7):
+//   H1 = sigma(W1 z + b1)
+//   H2 = sigma(W2 H1 + b2)
+//   H3 = G1 (.) H2,  G1 = sigma(W5 z + b5)
+//   H4 = sigma(W3 H3 + b3)
+//   H5 = G2 (.) H4,  G2 = sigma(W6 z + b6)
+//   h(z;theta) = W4 H5 + b4
+//
+// MUST match the Net struct in main_training.cpp exactly.
+// ═══════════════════════════════════════════════════════════════
+
+#include "udf.hpp"
+#include "opSEM.hpp"
+#include "iofldFactory.hpp"
+#include <torch/torch.h>
+#include <torch/serialization.h>
+#include <fstream>
+#include <sstream>
+
+#ifdef __okl__
+#include "combined.oudf"
+#endif
+
+// ═══════════════════════════════════════════════════════════════
+// Neural Network — Eq. (2.7) gated architecture
+// MUST match main_training.cpp exactly
+// ═══════════════════════════════════════════════════════════════
+struct Net : torch::nn::Module {
+
+  static constexpr int dim_in = 9;
+  static constexpr int dim_hidden = 64;
+  static constexpr int dim_out = 9;
+
+  torch::nn::Linear W1{nullptr}, W2{nullptr}, W3{nullptr};
+  torch::nn::Linear W4{nullptr}, W5{nullptr}, W6{nullptr};
+
+  Net()
+  {
+    W1 = register_module("W1", torch::nn::Linear(dim_in, dim_hidden));
+    W2 = register_module("W2", torch::nn::Linear(dim_hidden, dim_hidden));
+    W5 = register_module("W5", torch::nn::Linear(dim_in, dim_hidden));
+    W3 = register_module("W3", torch::nn::Linear(dim_hidden, dim_hidden));
+    W6 = register_module("W6", torch::nn::Linear(dim_in, dim_hidden));
+    W4 = register_module("W4", torch::nn::Linear(dim_hidden, dim_out));
+  }
+
+  torch::Tensor forward(torch::Tensor z)
+  {
+    auto H1 = torch::sigmoid(W1->forward(z));
+    auto H2 = torch::sigmoid(W2->forward(H1));
+    auto G1 = torch::sigmoid(W5->forward(z));
+    auto H3 = G1 * H2;
+    auto H4 = torch::sigmoid(W3->forward(H3));
+    auto G2 = torch::sigmoid(W6->forward(z));
+    auto H5 = G2 * H4;
+    return W4->forward(H5);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Globals
+// ═══════════════════════════════════════════════════════════════
+static std::shared_ptr<Net> model;
+static bool isAdjoint = false;
+static int totalSteps = 0;
+
+// Forward-mode buffers
+static occa::memory o_gradU; // [9 x N] grad of u (forward)
+static occa::memory o_hkj;   // [9 x N] NN output
+static occa::memory o_uDNS;  // [3 x N] DNS reference at window end
+
+// Adjoint-mode buffers
+static occa::memory o_uBar;      // [3 x N] frozen u-bar from file
+static occa::memory o_gradUBar;  // [9 x N] grad of u-bar (= Z)
+static occa::memory o_gradUHat;  // [9 x N] grad of u-hat
+static occa::memory o_A;         // [9 x N] NN Jacobian-divergence tensor
+static occa::memory o_transTerm; // [3 x N] transpose term output (GPU)
+
+// Cached kernel handle — loaded once in UDF_Setup, reused every step
+static occa::kernel transposeTermKernel;
+
+// ═══════════════════════════════════════════════════════════════
+// loadModel — shared by both modes
+// ═══════════════════════════════════════════════════════════════
+
+void loadModel(const std::string &modelPath)
+{
+  model = std::make_shared<Net>();
+  std::ifstream f(modelPath);
+  if (f.good()) {
+    torch::load(model, modelPath);
+    if (platform->comm.mpiRank == 0) {
+      std::cout << "Loaded model from: " << modelPath << std::endl;
+    } else {
+      if (platform->comm.mpiRank == 0) {
+        std::cout << "Model file not found: " << modelPath << std::endl;
+      }
+    }
+    model->to(torch::kCUDA);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // FORWARD MODE
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── forwardSource ─────────────────────────────────────────────
+  // Computes closure term: -d h_ij / d x_j
+  // Registered as nrs->userSource in forward mode
+  // nekRS calls this every timestep BEFORE makeForcing()
+  // nekRS has already zeroed o_EXT before calling us
+
+  void forwardSource(double time)
+  {
+
+    mesh_t *mesh = nrs->meshV;
+    dlong Ntotal = nrs->fluid->fieldOffset;
+    occa::memory &o_U = nrs->fluid->o_U;
+
+    // STEP A: Z = grad(ubar) — velocity gradient tensor
+    // opSEM::strongGradVec output [9 x N] row-major:
+    //   [0*N]=d u/dx  [1*N]=d u/dy  [2*N]=d u/dz
+    //   [3*N]=d v/dx  [4*N]=d v/dy  [5*N]=d v/dz
+    //   [6*N]=d w/dx  [7*N]=d w/dy  [8*N]=d w/dz
+
+    opSEM::strongGradVec(mesh, Ntotal, o_U, o_gradU, true);
+
+    dfloat *gradU_ptr = static_cast<dfloat *>(o_gradU.ptr());
+    auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA).requires_grad(false);
+
+    // z shape: [Ntotal, 9] — each row is one quadrature point's Z
+    torch::Tensor z = torch::from_blob(gradU_ptr, {9, Ntotal}, opts).t().contiguous();
+
+    // STEP C: NN forward pass on GPU — no gradient tracking
+    torch::Tensor h_kj;
+    {
+      torch::NoGradGuard no_grad;
+      h_kj = model->forward(z);
+    }
+    // STEP D: transpose to [9, Ntotal] for OCCA layout
+
+    torch::Tensor h_kj_T = h_kj.t().contiguous();
+    o_hkj.copyFrom(h_kj_T.data_ptr<float>(), 9 * Ntotal);
+
+    // STEP E: compute -d h_ij / d x_j -> inject into o_EXT
+    for (int i = 0; i < 3; ++i) {
+      occa::memory o_row_i = o_hkj.slice(i * 3 * Ntotal, 3 * Ntotal);
+      occa::memory o_div_i = opSEM::strongDivergence(mesh, Ntotal, o_row_i, true);
+      occa::memory o_EXT_i = nrs->fluid->o_EXT.slice(i * Ntotal, Ntotal);
+
+      // o_EXT[i] -= div(tau_i)  ← minus sign from PDE
+      platform->linAlg->axpby(Ntotal, -1.0, o_div_i, 1.0, o_EXT_i);
+      o_div_i.free();
+    }
+  }
+
+  // ── forwardExecuteStep ────────────────────────────────────────
+  // Called every timestep after the solve
+  // Writes velocity field at every step (adjoint reads these as ubar)
+  // At final step: computes loss + writes adjoint IC
+
+  void forwardExecuteStep(dfloat time, int tstep)
+  {
+    mesh_t *mesh = nrs->meshV;
+    dlong Ntotal = nrs->fluid->fieldOffset;
+
+    {
+      auto writer = iofldFactory::create("");
+      writer->open(mesh, iofld::mode::write, "forward/forward");
+      writer->writeAttribute("precision", 32);
+      writer->writeAttribute("polynomialOrder", std::to_string(mesh->N));
+
+      std::vector<occa::memory> o_vel;
+      o_vel.push_back(nrs->fluid->o_U.slice(0 * Ntotal, mesh->Nlocal));
+      o_vel.push_back(nrs->fluid->o_U.slice(1 * Ntotal, mesh->Nlocal));
+      o_vel.push_back(nrs->fluid->o_U.slice(2 * Ntotal, mesh->Nlocal));
+      writer->writeField("velocity", o_vel);
+
+      double t = time;
+      writer->writeAttribute("time", std::to_string(t));
+      writer->process();
+      writer->close();
+    }
+
+    if (platform->comm.mpiRank() == 0) {
+      std::cout << "Forward step " << tstep << "," << "time" << time << " written to file." << std::endl;
+    }
+
+    if (tstep == totalSteps) {
+      int dnsEndStep = 50;
+      {
+        std::ifstream sf("dns_step.txt");
+        if (sf.good()) {
+          sf >> dnsEndStep;
+        }
+      }
+
+      {
+        auto dnsReader = iofldFactory::create("");
+        dnsReader->open(mesh, iofld::mode::read, "dns_data/uDNS", dnsEndStep);
+        std::vector<occa::memory> o_dnsVel;
+        o_dnsVel.push_back(o_uDNS.slice(0 * Ntotal, mesh->Nlocal));
+        o_dnsVel.push_back(o_uDNS.slice(1 * Ntotal, mesh->Nlocal));
+        o_dnsVel.push_back(o_uDNS.slice(2 * Ntotal, mesh->Nlocal));
+        dnsReader->addVariable("velocity", o_dnsVel);
+        dnsReader->process();
+        dnsReader->close();
+      }
+
+      if (platform->comm.mpiRank() == 0) {
+        std::cout << "Forward: loaded DNS reference step" << dnsEndStep << std::endl;
+      }
+      // Compute (uLES - uDNS) / ||uLES - uDNS|| on GPU
+      dfloat *uLES_ptr = static_cast<dfloat *>(nrs->fluid->o_U.ptr());
+      dfloat *uDNS_ptr = static_cast<dfloat *>(o_uDNS.ptr());
+      auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA).requires_grad(false);
+      torch::Tensor uLES = torch::from_blob(uLES_ptr, {3, Ntotal}, opts).t().contiguous();
+      torch::Tensor uDNS = torch::from_blob(uDNS_ptr, {3, Ntotal}, opts).t().contiguous();
+      torch::Tensor diff = uLES - uDNS;
+      torch::Tensor norm = torch::norm(diff) + 1e-14f;
+      torch::Tensor o_gradUHat = diff / norm;
+    }
+  }
+
+  void UDF_ExecuteStep(dfloat time, int tstep)
+  {
+
+    if (!isAdjoint) {
+      // Forward solve
+      UDF_ForwardStep(time, tstep);
+    } else {
+      // Adjoint solve
+      UDF_AdjointStep(time, tstep);
+    }
+  }
