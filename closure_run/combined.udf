@@ -229,8 +229,116 @@ void loadModel(const std::string &modelPath)
       torch::Tensor uDNS = torch::from_blob(uDNS_ptr, {3, Ntotal}, opts).t().contiguous();
       torch::Tensor diff = uLES - uDNS;
       torch::Tensor norm = torch::norm(diff) + 1e-14f;
-      torch::Tensor o_gradUHat = diff / norm;
+      torch::Tensor uhat = (diff / norm.unsqueeze(0)).t().contiguous();
+
+      float lossLocal = norm.mean().item<float>();
+      float lossGlobal = 0.0f;
+      platform->comm.allreduce(&lossLocal, &lossGlobal, 1, comm_t::op::sum, platform->comm.mpiComm());
+      lossGlobal /= platform->comm.mpiCommSize();
+      if (platform->comm.mpiRank() == 0) {
+        auto uhat_cpu = uhat.cpu();
+        std::ofstream icFile("adjoint_ic.bin", std::ios::binary);
+        icFile.write(reinterpret_cast<const char *>(uhat_cpu.data_ptr<float>()), 3 * Ntotal * sizeof(float));
+        icFile.close();
+        std::cout << "Forward: loss = " << lossGlobal << std::endl;
+        std::ofstream lossFile("loss.txt");
+        lossFile << lossGlobal << std::endl;
+        lossFile.close();
+        std::cout << "Forward: loss written to file." << std::endl;
+        std::cout << "Forward: adjoint initial conditions written to file." << std::endl;
+      }
+      MPI_Barrier(platform->comm.mpiComm());
     }
+  }
+  // ═══════════════════════════════════════════════════════════════
+  // ADJOINT MODE FUNCTIONS
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── loadForwardVelocity ───────────────────────────────────────
+  // Reads ubar from forward field file -> o_uBar on GPU
+  // Also copies into o_Uadv (activates the computeUrst patch)
+  // Also computes grad(ubar) -> o_gradUBar
+
+  void loadForwardVelocity(int forwardStep)
+  {
+    mesh_t *mesh = nrs->meshV;
+    dlong Ntotal = nrs->fluid->fieldOffset;
+
+    auto reader = iofldFactory::create("");
+    reader->open(mesh, iofld::mode::read, "forward/forward", step);
+
+    std::vector<occa::memory> o_vel;
+    o_vel.push_back(o_uBar.slice(0 * Ntotal, mesh->Nlocal));
+    o_vel.push_back(o_uBar.slice(1 * Ntotal, mesh->Nlocal));
+    o_vel.push_back(o_uBar.slice(2 * Ntotal, mesh->Nlocal));
+    reader->addVariable("velocity", o_vel);
+    double t = 0.0;
+    reader->addVariable("time", t);
+    reader->process();
+    reader->close();
+
+    // Activate computeUrst patch: use ubar as convection velocity
+    // This gives (ubar . grad) uhat instead of (uhat . grad) uhat
+    nrs->fluid->o_Uadv.copyFrom(o_uBar, 3 * Ntotal);
+
+    // Compute Z = grad(ubar) — needed by transpose term + NN Jacobian
+    opSEM::strongGradVec(mesh, Ntotal, o_uBar, o_gradUBar, true);
+
+    if (platform->comm.mpiRank() == 0) {
+      std::cout << "Adjoint: loaded forward step " << forwardStep << " into o_uBar and o_gradUBar."
+                << std::endl;
+    }
+  }
+  // ── computeTransposeTerm ──────────────────────────────────────
+  // Computes (grad ubar)^T uhat and adds to o_EXT
+  // Uses GPU kernel defined in combined.oudf
+  //
+  // Math: term_i = sum_j  d(ubar_j)/d(xi) * uhat_j
+
+  void computeTransposeTerm()
+  {
+    mesh_t *mesh = nrs->meshV;
+    dlong Ntotal = nrs->fluid->fieldOffset;
+
+    // Launch GPU kernel to compute transpose term
+    transposeTermKernel(mesh->Nlocal, Ntotal, o_gradUBar, o_uBar, o_transTerm);
+
+    // Add transpose term to o_EXT
+    for (int i = 0; i < 3; ++i) {
+      occa::memory o_term_i = o_transTerm.slice(i * Ntotal, Ntotal);
+      occa::memory o_EXT_i = nrs->fluid->o_EXT.slice(i * Ntotal, Ntotal);
+      platform->linAlg->axpby(Ntotal, 1.0, o_term_i, 1.0, o_EXT_i);
+    }
+  }
+
+  // ── computeNNJacobianTerm ─────────────────────────────────────
+  // Computes div(A) and adds to o_EXT
+  //
+  // A_mi = sum_k uhat_k * sum_j d/dxj ( d h_kj / d Z_mi )
+  //
+  // NOTE: CPU round-trip at divJ step — known bottleneck,
+  //       acceptable for now, optimize later via device.finish()
+
+  void computeNNJacobianTerm()
+  {
+    mesh_t *mesh = nrs->meshV;
+    dlong Ntotal = nrs->fluid->fieldOffset;
+    dfloat *gradUBar_ptr = static_cast<dfloat *>(o_gradUBar.ptr());
+    auto optsZ = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA).requires_grad(true);
+    torch::Tensor Z = torch::from_blob(gradUBar_ptr, {9, Ntotal}, optsZ).t().contiguous();
+    torch::Tensor h = model->forward(Z);
+    torch::Tensor J =
+        torch::zeros({Ntotal, 9, 9},
+                     torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA).requires_grad(false));
+
+    for (int kj = 0; kj < 9; ++kj) {
+      auto grads = torch::autograd::grad({h.select(1, kj).sum()}, {Z}, {}, true, false);
+      J.select(1, kj).copy_(grads[0].);
+    }
+
+    torch::Tensor J4 = J.view({Ntotal, 3, 3, 9});
+
+    // TODO
   }
 
   void UDF_ExecuteStep(dfloat time, int tstep)
