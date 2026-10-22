@@ -1,0 +1,484 @@
+## SLURM PROLOG ###############################################################
+##    Job ID : 7757567
+##  Job Name : NEKRS_LES
+##  Nodelist : gpu4101
+##      CPUs : 1
+##  Mem/Node : 65536 MB
+## Directory : /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/test_adjoint
+##   Job Started : Thu Oct 22 12:03:21 AM EDT 2026
+###############################################################################
+reading combined.par
+UTC time: Thu Oct 22 04:03:27 2026
+
+███    ██ ███████ ██   ██ ██████  ███████
+████   ██ ██      ██  ██  ██   ██ ██     
+██ ██  ██ █████   █████   ██████  ███████
+██  ██ ██ ██      ██  ██  ██   ██      ██
+██   ████ ███████ ██   ██ ██   ██ ███████
+(c) 2019-2025 UCHICAGO ARGONNE, LLC
+v25.0.2 (sha:a70a3ac4)
+
+default FP precision: 64
+MPI tasks: 1
+
+general::writecontrol is deprecated and might be removed in the future!
+general::writeinterval is deprecated and might be removed in the future!
+Initializing device 
+active occa mode: CUDA
+
+detected device atomic support
+ENABLE GS COMM OVERLAP disabled
+
+using NEKRS_HOME: /oscar/data/gk/kshukla1/.local/nekrs
+using NEKRS_CACHE_DIR: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/test_adjoint/.cache
+using OCCA_CACHE_DIR: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/test_adjoint/.cache/occa/
+
+building nekInterface for lx1=6, lelt=28, lelg=27 ...
+done (29.8672s)
+loading nek ... done
+building udf ... 
+[100%] Built target udf
+done (8.3886s)
+
+<<< [GENERAL]
+<<< polynomialOrder = 5
+<<< dt = 1e-3
+<<< stopAt = numSteps
+<<< numSteps = 5
+<<< timeStepper = tombo2
+<<< writeControl = steps
+<<< writeInterval = 5
+<<< 
+<<< [FLUID PRESSURE]
+<<< residualTol = 1e-8
+<<< 
+<<< [FLUID VELOCITY]
+<<< boundaryTypeMap = none
+<<< viscosity = 1/100
+<<< density = 1.0
+<<< residualTol = 1e-8
+
+<<< #include "udf.hpp"
+<<< #include <cmath>
+<<< 
+<<< 
+<<< // divergence-free, 2*pi-periodic Taylor-Green-like field plus small extra modes
+<<< void useric(nrs_t *nrs)
+<<< {
+<<<   auto mesh = nrs->meshV;
+<<<   const dlong N = nrs->fieldOffset;
+<<<   std::vector<dfloat> U(mesh->dim * N, 0.0);
+<<<   auto [x, y, z] = mesh->xyzHost();
+<<<   for (int i = 0; i < mesh->Nlocal; i++) {
+<<<     U[i + 0 * N] =  std::sin(x[i]) * std::cos(y[i]) * std::cos(z[i]) + 0.2 * std::sin(z[i]);
+<<<     U[i + 1 * N] = -std::cos(x[i]) * std::sin(y[i]) * std::cos(z[i]) + 0.2 * std::sin(x[i]);
+<<<     U[i + 2 * N] =  0.1 * std::sin(y[i]);
+<<<   }
+<<<   nrs->fluid->o_solution().copyFrom(U.data(), U.size());
+<<< }
+<<< 
+<<< void UDF_Setup() { useric(nrs); }
+<<< 
+<<< void UDF_ExecuteStep(double time, int tstep) {}
+
+<<< #ifdef __okl__
+<<< #include "combined.oudf"
+<<< #endif
+<<< #ifdef __okl__
+<<< void udfDirichlet(bcData *bc){}
+<<< void udfNeumann(bcData *bc){}
+<<< void udfRobin(bcData *bc){}
+<<< #endif
+
+JIT compiling kernels (this may take awhile if they are not in cache) ...
+done (308.561s)
+
+loading kernels ...
+loading udf kernels ... 
+done (0.0575132s)
+Ax: Ndim=3 N=5 wordSize=64 wordSizeGeo=64 GDOF/s=0.775899 GB/s=53.6302 GFLOPS/s=124.69 constCoeff=0 poisson=0 kernelVer=1
+Ax: N=5 wordSize=64 wordSizeGeo=64 GDOF/s=0.273762 GB/s=30.2759 GFLOPS/s=41.6294 constCoeff=1 poisson=1 kernelVer=8
+Ax: N=5 wordSize=32 wordSizeGeo=32 GDOF/s=0.835306 GB/s=46.1891 GFLOPS/s=127.02 constCoeff=1 poisson=1 kernelVer=8
+fdm: N=7 wordSize=32 GDOF/s=2.2875 GB/s=46.0969 GFLOPS/s=331.215 kernelVer=11
+Ax: N=3 wordSize=32 wordSizeGeo=32 GDOF/s=0.184331 GB/s=13.9818 GFLOPS/s=27.9636 constCoeff=1 poisson=1 kernelVer=7
+fdm: N=5 wordSize=32 GDOF/s=0.837252 GB/s=20.2548 GFLOPS/s=105.614 kernelVer=11
+done (23.8852s)
+wdotp nFields=01 min/avg/max: 1.221e-05s 1.373e-05s 1.784e-05s  
+wdotp nFields=03 min/avg/max: 1.314e-05s 1.337e-05s 1.414e-05s  
+
+done (0.0148969)
+ reading combined.re2                                                                                                                        
+ hdr:#v002       27  3       27 hdr                                                  
+ reading mesh 
+   readp_re2_mesh:pack/cr/unpack : 0.21E-01 0.80E-05 0.33E-05
+   readp_re2_mesh:byte_read_mpi  : 0.15E-04
+ reading boundary faces                   54 for ifield   1
+   readp_re2_bc:pack/cr/unpack : 0.11E-05 0.15E-05 0.19E-05
+   readp_re2_bc:byte_read_mpi  : 0.34E-05
+ done :: read .re2 file    0.21E-01 sec
+
+Running parCon ...
+parCon (tol = 2.000000e-01) finished in 0.00129938 s
+Running parRSB ..., nv = 8, nelg = 27
+PARRSB_PARTITIONER = 0
+PARRSB_TAGGED = 0
+PARRSB_LEVELS = 2
+PARRSB_FIND_DISCONNECTED_COMPONENTS = 0
+PARRSB_REPAIR = 0
+PARRSB_VERBOSE_LEVEL = 1
+PARRSB_PROFILE_LEVEL = 0
+PARRSB_RSB_ALGO = 0
+PARRSB_RSB_PRE = 1
+PARRSB_RSB_MAX_ITER = 50
+PARRSB_RSB_MAX_PASSES = 50
+PARRSB_RSB_TOL = 0.000010
+PARRSB_RSB_MG_GRAMMIAN = 0
+PARRSB_RSB_MG_FACTOR = 2
+load_balance: nelg = 27
+load_balance: unit_size = 112 (rsb = 112, rcb = 48)
+initialize_levels: num_nodes = 1, num_ranks_per_node = 1
+initialize_levels: levels = 2
+parrsb_part_mesh_v0: levels requested = 2, levels enabled = 2
+parrsb_part_mesh_v0: running partitioner ...
+rsb: Level=1/2 number of cuts = 0
+rsb: Level=2/2 number of cuts = 0
+parrsb_part_mesh_v0: restore original input
+parRSB finished in 0.000101929 seconds.
+ reading mesh 
+   readp_re2_mesh:pack/cr/unpack : 0.13E-03 0.13E-05 0.15E-05
+   readp_re2_mesh:byte_read_mpi  : 0.76E-05
+ reading boundary faces                   54 for ifield   1
+   readp_re2_bc:pack/cr/unpack : 0.99E-06 0.90E-06 0.16E-05
+   readp_re2_bc:byte_read_mpi  : 0.81E-06
+ done :: read .re2 file    0.53E-03 sec
+
+ setup mesh topology
+   Right-handed check complete for          27 elements. OK.
+gs_setup: 0 unique labels shared
+   handle bytes (avg, min, max): 46228 46228 46228
+   buffer bytes (avg, min, max): 0 0 0
+   setupds time 1.0593E-03 seconds   0  6        1647          27
+ 
+ 
+ max multiplicity            8
+ done :: setup mesh topology
+  
+ call usrdat
+ done :: usrdat
+
+ generate geometry data
+ done :: generate geometry data
+  
+ call usrdat2
+ done :: usrdat2
+
+  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00 xyz repair 1
+  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00 xyz repair 2
+  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00 xyz repair 3
+  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00  0.0000E+00 xyz repair 4
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+ verify mesh topology
+   0.0000000000000000        6.2831853070000001       Xrange
+   0.0000000000000000        6.2831853070000001       Yrange
+   0.0000000000000000        6.2831853070000001       Zrange
+ done :: verify mesh topology
+  
+ call usrdat3
+ done :: usrdat3
+
+ nek setup done in    2.5575E-01 s
+
+generating mesh ...
+loading mesh from nek ... Nelements: 27, NboundaryIDs: 0, NboundaryFaces: 0 done (2.065e-05s)
+polynomial order N: 5, over-integration order cubN: 7
+meshParallelGatherScatterSetup N=5
+autotuning gs for wordSize=8 nFields=1 
+local: 1.0540e-05s (9.3GB/s)
+autotuning gs for wordSize=8 nFields=3 
+local: 1.1010e-05s (20.9GB/s)
+unique number of gridpoints: : 3375
+ mesh metrics:
+ GLL grid spacing min/max    : 2.46E-01 5.97E-01
+ scaled Jacobian  min/max/avg: 1.00E+00 1.00E+00 1.00E+00
+ aspect ratio     min/max/avg: 1.00E+00 1.00E+00 1.00E+00
+
+================ SETUP FLUID ================
+Extrapolation Coefficient{
+  "mode": "CUDA"
+}
+
+setting IC ... 
+ useric for ifld            1
+copying solution from nek
+copying solution to nek
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+calling nek_userchk ...
+copying solution from nek
+calling UDF_Setup ... 
+copying solution to nek
+ regenerate geometry data           1
+ done :: regenerate geometry data           1
+  
+done (0.0139015s)
+================= ELLIPTIC SETUP FLUID VELOCITY =================
+Nfields: 3
+autotuning gs for wordSize=8 nFields=3 
+local: 1.1040e-05s (20.8GB/s)
+building Jacobi preconditioner ... done (0.0145918s)
+done (0.130951s)
+================= ELLIPTIC SETUP FLUID PRESSURE =================
+Nfields: 1
+non-trivial nullSpace detected
+autotuning gs for wordSize=8 nFields=1 
+local: 1.0010e-05s (9.8GB/s)
+building MG preconditioner ... 
+============= BUILDING pMG5 ==================
+autotuning gs for wordSize=4 nFields=1 
+local: 1.0500e-05s (6.3GB/s)
+autotuning gs for wordSize=4 nFields=1 
+local: 9.6100e-06s (9.7GB/s)
+estimating maxEigenvalue ... value=1.27838 done (0.0280858s)
+============= BUILDING pMG3 ==================
+meshParallelGatherScatterSetup N=3
+done (0.088799s)
+autotuning gs for wordSize=4 nFields=1 
+local: 9.6300e-06s (2.5GB/s)
+autotuning gs for wordSize=4 nFields=1 
+local: 9.5390e-06s (4.3GB/s)
+estimating maxEigenvalue ... value=1.28354 done (0.00144834s)
+============= BUILDING COARSE pMG1 ==================
+meshParallelGatherScatterSetup N=1
+done (0.0729631s)
+autotuning gs for wordSize=4 nFields=1 
+local: 9.5600e-06s (0.4GB/s)
+building FEM matrix ... done (0.000127539s)
+setup FEM solver ...
+
+ Num MPI tasks = 1
+
+ Num OpenMP threads = 1
+
+
+BoomerAMG SETUP PARAMETERS:
+
+ Max levels = 25
+ Num levels = 2
+
+ Strength Threshold = 0.250000
+ Interpolation Truncation Factor = 0.000000
+ Maximum Row Sum Threshold for Dependency Weakening = 0.900000
+
+ Coarsening Type = HMIS 
+ measures are determined locally
+
+
+ No global partition option chosen.
+
+ Interpolation = extended+i interpolation
+
+Operator Matrix Information:
+
+             nonzero            entries/row          row sums
+lev    rows  entries sparse   min  max     avg      min         max
+======================================================================
+  0      27      189  0.259     7    7     7.0   0.000e+00   0.000e+00
+  1       9       81  1.000     9    9     9.0  -1.669e-06   2.027e-06
+
+
+Interpolation Matrix Information:
+                    entries/row        min        max            row sums
+lev  rows x cols  min  max  avgW     weight      weight       min         max
+================================================================================
+  0    27 x 9       1    4   4.0   1.176e-01   2.941e-01   1.000e+00   1.000e+00
+
+
+     Complexity:   grid = 1.333333
+               operator = 1.428571
+                 memory = 1.857143
+
+
+
+
+BoomerAMG SOLVER PARAMETERS:
+
+  Maximum number of cycles:         1 
+  Stopping Tolerance:               0.000000e+00 
+  Cycle type (1 = V, 2 = W, etc.):  1
+
+  Relaxation Parameters:
+   Visiting Grid:                     down   up  coarse
+            Number of sweeps:            1    1     3 
+   Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     16   16    16 
+   Point types, partial sweeps (1=C, -1=F):
+                  Pre-CG relaxation (down):   0
+                   Post-CG relaxation (up):   0
+                             Coarsest grid:   0   0   0
+
+done (0.0414773s)
+-----------------------------------------------------------------------
+level|    Type    |                 |     Smoother                    |
+     |            |                 |                                 |
+-----------------------------------------------------------------------
+   0 |    pMG     |   Matrix-free   | Opt. 4th Kind Chebyshev+ASM(3,3)
+     |            |     p =  5      |
+   1 |    pMG     |   Matrix-free   | Opt. 4th Kind Chebyshev+ASM(3,3)
+     |            |     p =  3      |
+   2 |    AMG     |   FEM Matrix    | 
+-----------------------------------------------------------------------
+done (0.412395s)
+done (0.544905s)
+
+options:
+key: ADVECTION TYPE,                                                value: CUBATURE+CONVECTIVE
+key: APPLICATION,                                                   value: NRS
+key: BDF ORDER,                                                     value: 2
+key: BUILD ONLY,                                                    value: FALSE
+key: CASENAME,                                                      value: combined
+key: CHECKPOINT CONTROL,                                            value: STEPS
+key: CHECKPOINT ENGINE,                                             value: NEK
+key: CHECKPOINT INTERVAL,                                           value: 5.000000
+key: CHECKPOINT OUTPUT MESH,                                        value: FALSE
+key: CHECKPOINT PRECISION,                                          value: FP32
+key: CHECKPOINT READ CRYSTAL ROUTER,                                value: TRUE
+key: CI-MODE,                                                       value: 0
+key: CONSTANT FLOW RATE,                                            value: FALSE
+key: CUBATURE POLYNOMIAL DEGREE,                                    value: 7
+key: DEVICE NUMBER,                                                 value: LOCAL-RANK
+key: DT,                                                            value: 1.0000000000000000e-03
+key: ELEMENT MAP,                                                   value: ISOPARAMETRIC
+key: ELEMENT TYPE,                                                  value: 12
+key: ENABLE GS COMM OVERLAP,                                        value: FALSE
+key: EQUATION TYPE,                                                 value: NAVIERSTOKES
+key: EXT ORDER,                                                     value: 3
+key: FLUID,                                                         value: TRUE
+key: FLUID CHECKPOINTING,                                           value: TRUE
+key: FLUID DENSITY,                                                 value: 1.0000000000000000e+00
+key: FLUID PRESSURE ELLIPTIC COEFF FIELD,                           value: FALSE
+key: FLUID PRESSURE ELLIPTIC PRECO COEFF FIELD,                     value: FALSE
+key: FLUID PRESSURE HELMHOLTZ TYPE,                                 value: POISSON
+key: FLUID PRESSURE INITIAL GUESS,                                  value: PROJECTION-ACONJ
+key: FLUID PRESSURE MGSOLVER CYCLE,                                 value: VCYCLE+MULTIPLICATIVE
+key: FLUID PRESSURE MULTIGRID CHEBYSHEV DEGREE,                     value: 3
+key: FLUID PRESSURE MULTIGRID CHEBYSHEV MAX EIGENVALUE BOUND FACTOR,value: 1.1
+key: FLUID PRESSURE MULTIGRID COARSE SOLVER,                        value: BOOMERAMG
+key: FLUID PRESSURE MULTIGRID COARSE SOLVER LOCATION,               value: CPU
+key: FLUID PRESSURE MULTIGRID COARSE SOLVER PRECISION,              value: FP32
+key: FLUID PRESSURE MULTIGRID SMOOTHER,                             value: FOURTHOPTCHEBYSHEV+ASM
+key: FLUID PRESSURE PRECONDITIONER,                                 value: MULTIGRID
+key: FLUID PRESSURE SOLVER,                                         value: GMRES+FLEXIBLE+NVECTOR=15
+key: FLUID PRESSURE SOLVER TOLERANCE,                               value: 1e-8
+key: FLUID STRESSFORMULATION,                                       value: FALSE
+key: FLUID VELOCITY ELLIPTIC COEFF FIELD,                           value: TRUE
+key: FLUID VELOCITY ELLIPTIC PRECO COEFF FIELD,                     value: TRUE
+key: FLUID VELOCITY INITIAL GUESS,                                  value: EXTRAPOLATION
+key: FLUID VELOCITY PRECONDITIONER,                                 value: JACOBI
+key: FLUID VELOCITY REGULARIZATION METHOD,                          value: NONE
+key: FLUID VELOCITY SOLVER,                                         value: CG+BLOCK
+key: FLUID VELOCITY SOLVER TOLERANCE,                               value: 1e-8
+key: FLUID VISCOSITY,                                               value: 1.0000000000000000e-02
+key: FORMAT,                                                        value: 1.0
+key: MESH DIMENSION,                                                value: 3
+key: MESH FILE,                                                     value: combined.re2
+key: MOVING MESH,                                                   value: FALSE
+key: NEK USR FILE,                                                  value: combined.usr
+key: NUMBER OF SCALARS,                                             value: 0
+key: NUMBER TIMESTEPS,                                              value: 5
+key: OKL FILE CACHE,                                                value: /oscar/data/gk/kshukla1/CFD_NEKRS/nekRS/examples/test_adjoint/.cache/udf/udf.okl
+key: OVERINTEGRATION,                                               value: TRUE
+key: PLATFORM NUMBER,                                               value: 0
+key: POLYNOMIAL DEGREE,                                             value: 5
+key: START TIME,                                                    value: 0.0
+key: STDOUT PAR,                                                    value: TRUE
+key: STDOUT UDF,                                                    value: TRUE
+key: SUBCYCLING STEPS,                                              value: 0
+key: THREAD MODEL,                                                  value: CUDA
+key: UDF FILE,                                                      value: combined.udf
+key: UDF OKL FILE,                                                  value: combined.oudf
+key: VERBOSE,                                                       value: FALSE
+
+occa max memory usage:      8590634 bytes
+  deviceMemoryPool:          796672 bytes
+  mempool:                   140544 bytes
+================= INITIAL CONDITION ====================
+MESH X          min/max: 0 6.28319  0 6.28319  0 6.28319
+FLUID U         min/max: -0.994172 0.994172  -0.994172 0.994172  -0.0974815 0.0974815
+FLUID p         min/max: 0 0
+
+initialization took 375.452 s
+
+timestepping for 5 steps ...
+
+step=1        FLUID p             : iter 006  resNorm0 3.50e+00  resNorm 3.37e-08
+step=1        FLUID U             : iter 002  resNorm0 8.17e-01  resNorm 5.55e-08
+step=1        FLUID divUErr       : 1.77e-17  2.38e-04
+step=1        t= 1.00000000e-03  dt=1.0e-03  CFL= 0.005
+step=1        elapsedStep= 4.09e-01s  elapsedStepSum= 4.09206e-01s
+::
+step=2        FLUID p             : iter 005  resNorm0 1.22e+00  resNorm 6.64e-08
+step=2        FLUID U             : iter 002  resNorm0 2.28e-01  resNorm 6.65e-09
+step=2        FLUID divUErr       : 1.30e-17  2.04e-04
+step=2        t= 2.00000000e-03  dt=1.0e-03  CFL= 0.005
+step=2        elapsedStep= 4.72e-03s  elapsedStepSum= 4.13927e-01s
+::
+step=3        FLUID p             : iter 005  resNorm0 4.32e-01  resNorm 2.00e-08
+step=3        FLUID U             : iter 002  resNorm0 1.53e-01  resNorm 4.35e-09
+step=3        FLUID divUErr       : 1.65e-17  1.72e-04
+step=3        t= 3.00000000e-03  dt=1.0e-03  CFL= 0.005
+step=3        elapsedStep= 4.61e-03s  elapsedStepSum= 4.18537e-01s
+::
+step=4        FLUID p             : iter 005  resNorm0 1.69e-01  resNorm 5.08e-09
+step=4        FLUID U             : iter 002  resNorm0 6.27e-03  resNorm 1.46e-10
+step=4        FLUID divUErr       : 1.42e-17  1.45e-04
+step=4        t= 4.00000000e-03  dt=1.0e-03  CFL= 0.005
+step=4        elapsedStep= 4.63e-03s  elapsedStepSum= 4.23164e-01s
+::
+step=5        FLUID p             : iter 005  resNorm0 1.43e-01  resNorm 4.30e-09
+step=5        FLUID U             : iter 002  resNorm0 3.53e-03  resNorm 8.42e-11
+step=5        FLUID divUErr       : 1.59e-17  1.22e-04
+writing to field file ...
+ user variables: time pressure velocity 
+ io step: 0
+ settings: N=5  precision=32  uniform=0
+ fileName: combined0.f00000
+ min/max:   0.0000       6.2832       0.0000       6.2832       0.0000       6.2832    
+ min/max: -0.99371      0.99371     -0.99438      0.99438     -0.98674E-01  0.98674E-01
+ min/max: -0.34948      0.37095    
+ elapsed time: 0.13006s  (0.00126904 GB/s)
+step=5        t= 5.00000000e-03  dt=1.0e-03  CFL= 0.005
+step=5        elapsedStep= 1.35e-01s  elapsedStepSum= 5.57931e-01s
+::
+
+>>> runtime statistics (step= 5  totalElapsed= 376.009s):
+name                    time          abs%  rel%  calls
+  solve                 5.57931e-01s  100.0      
+    min                 4.61050e-03s
+    max                 4.09206e-01s
+    flops/rank          5.35603e+08
+    checkpointing       1.29955e-01s  23.3        1
+    udfExecuteStep      2.20800e-06s   0.0        5
+    makef               3.52028e-02s   6.3        5
+    udfProperties       1.96800e-05s   0.0        6
+    velocitySolve       6.45592e-02s  11.6        5
+      rhs               4.18426e-02s   7.5  64.8  5
+      preconditioner    2.08310e-02s   3.7  32.3  10
+    pressureSolve       2.33051e-01s  41.8        5
+      rhs               1.13772e-01s  20.4  48.8  5
+      preconditioner    6.40558e-02s  11.5  27.5  26
+        pMG smoother    2.38097e-02s   4.3  37.2  52
+        pMG smoother    5.39318e-03s   1.0   8.4  52
+        coarse grid     1.25207e-03s   0.2   2.0  26
+      initial guess     1.54560e-04s   0.0   0.1  5
+
+occa max memory usage:     10022794 bytes
+  deviceMemoryPool:         2226944 bytes
+  mempool:                   140544 bytes
+
+
+finished with exit code 0

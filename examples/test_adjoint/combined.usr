@@ -1,0 +1,20 @@
+      subroutine userchk
+      include 'SIZE'
+      include 'TOTAL'
+      return
+      end
+      subroutine useric (ix,iy,iz,ieg)
+      include 'SIZE'
+      include 'TOTAL'
+      include 'NEKUSE'
+      return
+      end
+      subroutine usrdat
+      return
+      end
+      subroutine usrdat2
+      return
+      end
+      subroutine usrdat3
+      return
+      end

@@ -1627,8 +1627,7 @@ void nrs_t::initInnerStep(double time, dfloat _dt, int _tstep)
 {
   timePrevious = time;
   dt[0] = _dt;
-  nekrsCheck((dt[0] <= 0 && !platform->options.compareArgs("ALLOW NEGATIVE DT", "TRUE")) ||
-                 std::isnan(dt[0]) || std::isinf(dt[0]),
+  nekrsCheck((dt[0] <= 0 || std::isnan(dt[0]) || std::isinf(dt[0])),
              MPI_COMM_SELF,
              EXIT_FAILURE,
              "%s",

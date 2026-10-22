@@ -1,0 +1,17 @@
+[GENERAL]
+polynomialOrder = 5
+dt = 1e-3
+stopAt = numSteps
+numSteps = 5
+timeStepper = tombo2
+writeControl = steps
+writeInterval = 5
+
+[FLUID PRESSURE]
+residualTol = 1e-8
+
+[FLUID VELOCITY]
+boundaryTypeMap = none
+viscosity = 1/100
+density = 1.0
+residualTol = 1e-8
