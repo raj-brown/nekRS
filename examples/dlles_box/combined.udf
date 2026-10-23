@@ -1,0 +1,84 @@
+#include "udf.hpp"
+#include "net.hpp"
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <algorithm>
+
+#ifdef __okl__
+#include "combined.oudf"
+#endif
+
+static_assert(sizeof(dfloat) == 8, "combined.udf needs a double-precision nekRS build");
+
+namespace
+{
+  int dlMode = 0; // 0 inference | 1 train-forward | 2 train-adjoint
+  std::shared_ptr<Net> model;
+  int closureType = 0;
+  double kappa= 0.0;
+  deviceMemory<dfloat> o_gradU, o_hkj;
+
+void loadModel()
+{
+  const std::string path = "model.pt";
+  std::ifstream f(path);
+  if (!f.good()) {
+    if (platform->comm.mpiRank() == 0) std::cerr << "ERROR: " << path << " not found\n";
+    MPI_Abort(platform->comm.mpiComm(), EXIT_FAILURE);
+  }
+  model = std::make_shared<Net>();
+  model->to(kModelDtype);
+  torch::load(model, path);
+  model->to(torch::kCUDA);
+
+  if (platform->comm.mpiRank() == 0) {
+    int64_t n = 0;
+    for (auto &p : model->parameters()) n += p.numel();
+    auto p0 = model->parameters()[0];
+    std::cout << "dlLES: loaded " << path << ": " << n << " parameters, dtype=" << p0.dtype()
+              << ", device=" << p0.device() << ", dlMode=" << dlMode << "\n";
+  }
+}
+  void closureSource(double time)
+  {
+    mesh_t *mesh = nrs->meshV;
+    const dlong Ntotal = nrs->fluid->fieldOffset;
+    occa::memory &o_U = nrs->fluid->o_U;
+    
+
+
+  }
+
+} // namespace
+
+// divergence-free, 2*pi-periodic Taylor-Green-like field plus small extra modes
+void useric(nrs_t *nrs)
+{
+  auto mesh = nrs->meshV;
+  const dlong N = nrs->fieldOffset;
+  std::vector<dfloat> U(mesh->dim * N, 0.0);
+  auto [x, y, z] = mesh->xyzHost();
+  for (int i = 0; i < mesh->Nlocal; i++) {
+    U[i + 0 * N] =  std::sin(x[i]) * std::cos(y[i]) * std::cos(z[i]) + 0.2 * std::sin(z[i]);
+    U[i + 1 * N] = -std::cos(x[i]) * std::sin(y[i]) * std::cos(z[i]) + 0.2 * std::sin(x[i]);
+    U[i + 2 * N] =  0.1 * std::sin(y[i]);
+  }
+  nrs->fluid->o_solution().copyFrom(U.data(), U.size());
+}
+
+void UDF_Setup0(MPI_Comm comm, setupAide &options)
+{
+  platform->par->extract("casedata", "dlmode", dlMode);
+  platform->par->extract("casedata", "closuretype", closureType);
+  platform->par->extract("casedata", "kappa", kappa);
+}
+
+void UDF_Setup()
+{
+  useric(nrs);
+  loadModel();
+  
+}
+
+void UDF_ExecuteStep(double time, int tstep) {}
