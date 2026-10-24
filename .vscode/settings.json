@@ -1,0 +1,6 @@
+{
+  "files.associations": {
+    "*.udf": "cpp",
+    "*.oudf": "cpp"
+  }
+}
