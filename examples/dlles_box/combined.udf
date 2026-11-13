@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <filesystem>
 
 #ifdef __okl__
 #include "combined.oudf"
@@ -13,11 +14,13 @@ static_assert(sizeof(dfloat) == 8, "combined.udf needs a double-precision nekRS 
 
 namespace
 {
-  int dlMode = 0; // 0 inference | 1 train-forward | 2 train-adjoint
-  std::shared_ptr<Net> model;
-  int closureType = 0;
-  double kappa= 0.0;
-  deviceMemory<dfloat> o_gradU, o_hkj;
+int dlMode = 0;       // 0 inference | 1 train-forward | 2 train-adjoint
+int closureType = 0;  // 0: neural network | 1: linear test h = -kappa*grad(u) | -1: none
+double kappa = 0.0;
+int M = 0;
+const std::string snapBase = "dlfwd/state";
+std::shared_ptr<Net> model;
+deviceMemory<dfloat> o_gradU, o_hkj;
 
 void loadModel()
 {
@@ -40,15 +43,81 @@ void loadModel()
               << ", device=" << p0.device() << ", dlMode=" << dlMode << "\n";
   }
 }
-  void closureSource(double time)
+
+std::vector<occa::memory> vel3(occa::memory &o_v){
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  const dlong Nl = nrs->meshV->Nlocal;
+  return {o_v.slice(0 * Ntotal, Nl), o_v.slice(1 * Ntotal, Nl), o_v.slice(2 * Ntotal, Nl)};
+}
+
+void writeSnapshot(){
+  platform->device.finish();
+  auto w = iofldFactory::create("");
+  w->open(nrs->meshV, iofld::mode::write, snapBase);
+  w->writeAttribute("precision", "64");
+  w->addVariable("velocity", vel3(nrs->fluid->o_U));
+  w->process(); 
+  w->close();
+}
+
+void closureSource(double time)
+{
+  mesh_t *mesh = nrs->meshV;
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  occa::memory &o_U = nrs->fluid->o_U;
+
+  // 4.5 velocity gradient: row 3*i+d = d_d u_i
+  opSEM::strongGradVec(mesh, Ntotal, o_U, o_gradU, true);
+  platform->device.finish();
+
+  // 4.6 wrap the GPU memory as a torch tensor [N,9]
+  auto opts = torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCUDA).requires_grad(false);
+  dfloat *gradU_ptr = static_cast<dfloat *>(o_gradU.ptr());
+  torch::Tensor z = torch::from_blob(gradU_ptr, {9, Ntotal}, opts).t().contiguous();
+
+  // 4.7 evaluate the closure
+  torch::Tensor h;
   {
-    mesh_t *mesh = nrs->meshV;
-    const dlong Ntotal = nrs->fluid->fieldOffset;
-    occa::memory &o_U = nrs->fluid->o_U;
-    
-
-
+    torch::NoGradGuard no_grad;
+    h = (closureType == 1) ? (-kappa * z) : model->forward(z);
   }
+
+  // 4.8 back into OCCA memory: [9,N]
+  torch::Tensor hT = h.t().contiguous();
+  o_hkj.copyFrom(hT.data_ptr<double>(), 9 * Ntotal);
+
+  // 4.9 divergence of each row of h, subtracted from the momentum forcing
+  for (int i = 0; i < 3; ++i) {
+    auto o_row_i = o_hkj.slice(i * 3 * Ntotal, 3 * Ntotal); // (h_i0, h_i1, h_i2)
+    occa::memory o_div_i = opSEM::strongDivergence(mesh, Ntotal, o_row_i, true); // d_j h_ij
+    occa::memory o_EXT_i = nrs->fluid->o_EXT.slice(i * Ntotal, Ntotal);
+    platform->linAlg->axpby(Ntotal, -1.0, o_div_i, 1.0, o_EXT_i); // EXT_i -= d_j h_ij
+    o_div_i.free();
+  }
+  platform->device.finish();
+
+  // 4.10 one-time analytic check for the linear closure: f must equal kappa*Laplacian(u)
+  static bool checked = false;
+  if (closureType == 1 && !checked) {
+    checked = true;
+    std::vector<dfloat> f(3 * Ntotal);
+    nrs->fluid->o_EXT.copyTo(f.data(), 3 * Ntotal);
+    auto [xh, yh, zh] = mesh->xyzHost();
+    double v[2] = {0.0, 0.0}; // max error, max |f|
+    for (int n = 0; n < mesh->Nlocal; n++) {
+      const double X = xh[n], Y = yh[n], Zc = zh[n];
+      const double fx = kappa * (-3.0 * std::sin(X) * std::cos(Y) * std::cos(Zc) - 0.2 * std::sin(Zc));
+      const double fy = kappa * (3.0 * std::cos(X) * std::sin(Y) * std::cos(Zc) - 0.2 * std::sin(X));
+      const double fz = kappa * (-0.1 * std::sin(Y));
+      v[0] = std::max({v[0], std::abs(f[n] - fx), std::abs(f[n + Ntotal] - fy), std::abs(f[n + 2 * Ntotal] - fz)});
+      v[1] = std::max({v[1], std::abs(fx), std::abs(fy), std::abs(fz)});
+    }
+    MPI_Allreduce(MPI_IN_PLACE, v, 2, MPI_DOUBLE, MPI_MAX, platform->comm.mpiComm());
+    if (platform->comm.mpiRank() == 0) {
+      printf("dlLES check: max|f - kappa*lap(u)| = %.3e  max|f| = %.3e  ratio = %.3e\n", v[0], v[1], v[0] / v[1]);
+    }
+  }
+}
 
 } // namespace
 
@@ -72,13 +141,38 @@ void UDF_Setup0(MPI_Comm comm, setupAide &options)
   platform->par->extract("casedata", "dlmode", dlMode);
   platform->par->extract("casedata", "closuretype", closureType);
   platform->par->extract("casedata", "kappa", kappa);
+  options.getargs("NUMBER TIMESTEPS", M );
 }
 
 void UDF_Setup()
 {
   useric(nrs);
   loadModel();
-  
+
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  o_gradU.resize(9 * Ntotal);
+  o_hkj.resize(9 * Ntotal);
+
+  if (dlMode == 0 && closureType >= 0) nrs->userSource = &closureSource;
+  if (dlMode == 1){
+    if (platform->comm.mpiRank() == 0) {
+      std::filesystem::create_directories("dlfwd"); 
+    }
+    MPI_Barrier(platform->comm.mpiComm());
+    writeSnapShot();
+
+  }
+
 }
 
-void UDF_ExecuteStep(double time, int tstep) {}
+void UDF_ExecuteStep(double time, int tstep) {
+  if (dlmode ==1){
+    writeSnapShot();
+    if (tstep == M && platform->comm.mpiRank() == 0) {
+      std::cout << "dlLES: finished writing " << M << " written to" << snapBase << ",\n";
+    }
+    MPI_Abort(platform->comm.mpiComm(), EXIT_SUCCESS);
+  }
+}
+
+}
