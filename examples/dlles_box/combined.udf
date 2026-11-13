@@ -17,8 +17,8 @@ namespace
 int dlMode = 0;       // 0 inference | 1 train-forward | 2 train-adjoint
 int closureType = 0;  // 0: neural network | 1: linear test h = -kappa*grad(u) | -1: none
 double kappa = 0.0;
-int M = 0;
-const std::string snapBase = "dlfwd/state";
+int M = 0;                                  // steps in the window
+const std::string snapBase = "dlfwd/state"; // forward snapshots: dlfwd/state0.f<tstep>
 std::shared_ptr<Net> model;
 deviceMemory<dfloat> o_gradU, o_hkj;
 
@@ -44,19 +44,22 @@ void loadModel()
   }
 }
 
-std::vector<occa::memory> vel3(occa::memory &o_v){
+std::vector<occa::memory> vel3(occa::memory &o_v)
+{
   const dlong Ntotal = nrs->fluid->fieldOffset;
   const dlong Nl = nrs->meshV->Nlocal;
   return {o_v.slice(0 * Ntotal, Nl), o_v.slice(1 * Ntotal, Nl), o_v.slice(2 * Ntotal, Nl)};
 }
 
-void writeSnapshot(){
+// file name = snapBase + "0.f" + 5-digit counter of previous writes of this base in this process
+void writeSnapshot()
+{
   platform->device.finish();
   auto w = iofldFactory::create("");
   w->open(nrs->meshV, iofld::mode::write, snapBase);
   w->writeAttribute("precision", "64");
   w->addVariable("velocity", vel3(nrs->fluid->o_U));
-  w->process(); 
+  w->process();
   w->close();
 }
 
@@ -141,7 +144,7 @@ void UDF_Setup0(MPI_Comm comm, setupAide &options)
   platform->par->extract("casedata", "dlmode", dlMode);
   platform->par->extract("casedata", "closuretype", closureType);
   platform->par->extract("casedata", "kappa", kappa);
-  options.getargs("NUMBER TIMESTEPS", M );
+  options.getArgs("NUMBER TIMESTEPS", M);
 }
 
 void UDF_Setup()
@@ -153,26 +156,20 @@ void UDF_Setup()
   o_gradU.resize(9 * Ntotal);
   o_hkj.resize(9 * Ntotal);
 
-  if (dlMode == 0 && closureType >= 0) nrs->userSource = &closureSource;
-  if (dlMode == 1){
-    if (platform->comm.mpiRank() == 0) {
-      std::filesystem::create_directories("dlfwd"); 
-    }
+  if ((dlMode == 0 || dlMode == 1) && closureType >= 0) nrs->userSource = &closureSource;
+
+  if (dlMode == 1) {
+    if (platform->comm.mpiRank() == 0) std::filesystem::create_directories("dlfwd");
     MPI_Barrier(platform->comm.mpiComm());
-    writeSnapShot();
-
-  }
-
-}
-
-void UDF_ExecuteStep(double time, int tstep) {
-  if (dlmode ==1){
-    writeSnapShot();
-    if (tstep == M && platform->comm.mpiRank() == 0) {
-      std::cout << "dlLES: finished writing " << M << " written to" << snapBase << ",\n";
-    }
-    MPI_Abort(platform->comm.mpiComm(), EXIT_SUCCESS);
+    writeSnapshot(); // snapshot 0 = initial state -> dlfwd/state0.f00000
   }
 }
 
+void UDF_ExecuteStep(double time, int tstep)
+{
+  if (dlMode == 1) {
+    writeSnapshot(); // snapshot tstep
+    if (tstep == M && platform->comm.mpiRank() == 0)
+      std::cout << "dlLES: snapshots 0.." << M << " written to " << snapBase << "\n";
+  }
 }
