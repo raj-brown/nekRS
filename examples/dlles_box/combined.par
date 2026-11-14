@@ -21,10 +21,9 @@ residualTol = 1e-8
 
 [CASEDATA]
 dlMode = 2
-closureType = -1
-icType = 0
+closureType = 1
+kappa = 0.05
+icType = 1
 adjICType = 1
-stretchCheck = 1
-#kappa = 0.01
-#dnsFile = dns/k005_0.f00001
-#lossType = 0
+closureCheck = 0
+stretchCheck = 0

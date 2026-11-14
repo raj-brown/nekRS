@@ -27,7 +27,9 @@ int icType = 0;
 int adjICType = 0;
 occa::memory o_ubar;
 occa::memory o_gradUbar; // gradient of the loaded snapshot, row 3*j+d = d_d ubar_j
-int stretchCheck = 0;     // 1: test only - load snapshot 0 (analytic field) and check the stretching term once
+int stretchCheck = 0;
+int closureCheck = 0;      // 1: test only - check the adjoint closure term once (linear closure)
+deviceMemory<dfloat> o_gradUhat, o_B; // grad uhat (row 3k+j = d_j uhat_k) and B (row 3i+m = B_mi)     // 1: test only - load snapshot 0 (analytic field) and check the stretching term once
 std::shared_ptr<Net> model;
 deviceMemory<dfloat> o_gradU, o_hkj;
 
@@ -97,20 +99,69 @@ void loadForwardSnapshot(int idx)
   if (platform->comm.mpiRank() == 0) std::cout << "dlLES adjoint: c = -" << name << "\n";
 }
 
-// adjoint explicit forcing in mode 2 (so far: stretching term -(grad ubar)^T uhat)
+// adjoint explicit forcing in mode 2: closure term f_dag = -d_m B_mi, then stretching -(grad ubar)^T uhat
 void adjointSource(double time)
 {
+  mesh_t *mesh = nrs->meshV;
   const dlong Ntotal = nrs->fluid->fieldOffset;
-  const dlong Nl = nrs->meshV->Nlocal;
+  const dlong Nl = mesh->Nlocal;
   occa::memory o_EXT = nrs->fluid->o_EXT;
+
+  // ---- 8: closure term, B_mi = dS/dZ_mi with S = sum_kj G_kj h_kj(Z),  G = grad uhat,  Z = grad ubar
+  if (closureType >= 0) {
+    occa::memory &o_U = nrs->fluid->o_U;
+    opSEM::strongGradVec(mesh, Ntotal, o_U, o_gradUhat, true); // row 3k+j = d_j uhat_k
+    platform->device.finish();
+
+    auto opts = torch::TensorOptions().dtype(torch::kFloat64).device(torch::kCUDA).requires_grad(false);
+    torch::Tensor G = torch::from_blob(static_cast<dfloat *>(o_gradUhat.ptr()), {9, Ntotal}, opts).t().contiguous(); // [N,9]
+    torch::Tensor B;
+    if (closureType == 1) {
+      B = -kappa * G; // linear closure h = -kappa z: dS/dZ = -kappa G exactly
+    } else {
+      torch::Tensor Z = torch::from_blob(static_cast<dfloat *>(o_gradUbar.ptr()), {9, Ntotal}, opts).t().contiguous().requires_grad_(true);
+      torch::Tensor S = (G * model->forward(Z)).sum();
+      B = torch::autograd::grad({S}, {Z})[0]; // one backward pass: B = dS/dZ, [N,9], flat 3i+m
+    }
+    torch::Tensor BT = B.t().contiguous(); // [9,N]
+    o_B.copyFrom(BT.data_ptr<double>(), 9 * Ntotal);
+
+    for (int i = 0; i < 3; ++i) {
+      auto o_row_i = o_B.slice(i * 3 * Ntotal, 3 * Ntotal); // (B_0i, B_1i, B_2i)
+      occa::memory o_div_i = opSEM::strongDivergence(mesh, Ntotal, o_row_i, true); // d_m B_mi
+      occa::memory o_EXT_i = o_EXT.slice(i * Ntotal, Ntotal);
+      platform->linAlg->axpby(Ntotal, -1.0, o_div_i, 1.0, o_EXT_i); // EXT_i -= d_m B_mi
+      o_div_i.free();
+    }
+    platform->device.finish();
+
+    // test only: linear closure, uhat = (0, sin x, 0)  =>  f_dag = kappa * lap(uhat) = (0, -kappa sin x, 0)
+    static bool cchecked = false;
+    if (closureCheck == 1 && closureType == 1 && !cchecked) {
+      cchecked = true;
+      std::vector<dfloat> f(3 * Ntotal);
+      o_EXT.copyTo(f.data(), 3 * Ntotal); // EXT holds only the closure term at this point
+      auto [x, y, z] = mesh->xyzHost();
+      double v[2] = {0.0, 0.0}; // max error, max |f|
+      for (int n = 0; n < Nl; n++) {
+        const double fy = -kappa * std::sin(x[n]);
+        v[0] = std::max({v[0], std::abs(f[n]), std::abs(f[n + Ntotal] - fy), std::abs(f[n + 2 * Ntotal])});
+        v[1] = std::max(v[1], std::abs(fy));
+      }
+      MPI_Allreduce(MPI_IN_PLACE, v, 2, MPI_DOUBLE, MPI_MAX, platform->comm.mpiComm());
+      if (platform->comm.mpiRank() == 0)
+        printf("dlLES closure-adjoint check: max|f - kappa*lap(uhat)| = %.3e  max|f| = %.3e  ratio = %.3e\n", v[0], v[1], v[0] / v[1]);
+    }
+  }
+
+  // ---- 7: stretching term
   adjointStretching(Nl, Ntotal, -1.0, o_gradUbar, nrs->fluid->o_U, o_EXT); // EXT_i += -d_i ubar_j uhat_j
 
-  // test only: ubar = analytic initial field (snapshot 0), uhat = (0, sin x, 0)
+  // test only: ubar = analytic initial field (snapshot 0), uhat = (0, sin x, 0); run with closureType = -1
   static bool checked = false;
   if (stretchCheck == 1 && !checked) {
     checked = true;
     platform->device.finish();
-    auto mesh = nrs->meshV;
     std::vector<dfloat> f(3 * Ntotal);
     o_EXT.copyTo(f.data(), 3 * Ntotal);
     auto [x, y, z] = mesh->xyzHost();
@@ -141,7 +192,8 @@ void checkAdjointAdvection(double s)
   std::vector<dfloat> U(3 * Ntotal);
   nrs->fluid->o_U.copyTo(U.data(), 3 * Ntotal);
   auto [x, y, z] = mesh->xyzHost();
-  const double decay = std::exp(-nu * s);
+  const double nuEff = nu + (closureType == 1 ? kappa : 0.0); // linear closure adds kappa to the adjoint diffusion
+  const double decay = std::exp(-nuEff * s);
   double v[4] = {0.0, 0.0, 0.0, 0.0}; // err vs sin(x+s), err vs sin(x-s), max|uhat_y|, max|uhat_x|+|uhat_z|
   for (int n = 0; n < mesh->Nlocal; n++) {
     v[0] = std::max(v[0], std::abs(U[n + Ntotal] - decay * std::sin(x[n] + s)));
@@ -297,6 +349,7 @@ void UDF_Setup0(MPI_Comm comm, setupAide &options)
   platform->par->extract("casedata", "ictype", icType);
   platform->par->extract("casedata", "adjictype", adjICType);
   platform->par->extract("casedata", "stretchcheck", stretchCheck);
+  platform->par->extract("casedata", "closurecheck", closureCheck);
 }
 
 void UDF_Setup()
@@ -318,6 +371,8 @@ void UDF_Setup()
   if (dlMode == 2) {
     o_ubar = platform->device.malloc<dfloat>(3 * Ntotal);
     o_gradUbar = platform->device.malloc<dfloat>(9 * Ntotal);
+    o_gradUhat.resize(9 * Ntotal);
+    o_B.resize(9 * Ntotal);
     nrs->fluid->o_Uadv = platform->device.malloc<dfloat>(3 * Ntotal);
     nrs->fluid->useAdjointConvection = true; // activates the computeUrst hook
 
