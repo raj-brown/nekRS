@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <filesystem>
+#include <iomanip>
 
 #ifdef __okl__
 #include "combined.oudf"
@@ -19,6 +20,14 @@ int closureType = 0;  // 0: neural network | 1: linear test h = -kappa*grad(u) |
 double kappa = 0.0;
 int M = 0;                                  // steps in the window
 const std::string snapBase = "dlfwd/state"; // forward snapshots: dlfwd/state0.f<tstep>
+std::string dnsFile = "";   // target at T (full file name); empty = no loss (twin run)
+int lossType = 0;           // 0: J = 1/2 int |e|^2   1: J = int sqrt(|e|^2 + delta^2) (paper)
+double lossDelta = 1e-6;    // delta for lossType 1
+int icType = 0;
+int adjICType = 0;
+occa::memory o_ubar;
+occa::memory o_gradUbar; // gradient of the loaded snapshot, row 3*j+d = d_d ubar_j
+int stretchCheck = 0;     // 1: test only - load snapshot 0 (analytic field) and check the stretching term once
 std::shared_ptr<Net> model;
 deviceMemory<dfloat> o_gradU, o_hkj;
 
@@ -51,16 +60,147 @@ std::vector<occa::memory> vel3(occa::memory &o_v)
   return {o_v.slice(0 * Ntotal, Nl), o_v.slice(1 * Ntotal, Nl), o_v.slice(2 * Ntotal, Nl)};
 }
 
-// file name = snapBase + "0.f" + 5-digit counter of previous writes of this base in this process
-void writeSnapshot()
+// write 3 velocity-like components; file name = base + "0.f" + 5-digit counter of previous writes of this base
+void writeVelocity(const std::string &base, occa::memory &o_v)
 {
   platform->device.finish();
   auto w = iofldFactory::create("");
-  w->open(nrs->meshV, iofld::mode::write, snapBase);
+  w->open(nrs->meshV, iofld::mode::write, base);
   w->writeAttribute("precision", "64");
-  w->addVariable("velocity", vel3(nrs->fluid->o_U));
+  w->addVariable("velocity", vel3(o_v));
   w->process();
   w->close();
+}
+
+void writeSnapshot() { writeVelocity(snapBase, nrs->fluid->o_U); }
+
+// read a velocity field from an exact file name (no step suffix is added)
+void readVelocityFile(const std::string &file, occa::memory &o_v)
+{
+  auto r = iofldFactory::create("");
+  r->open(nrs->meshV, iofld::mode::read, file, -1);
+  r->addVariable("velocity", vel3(o_v));
+  r->process();
+  r->close();
+  platform->device.finish();
+}
+
+// load forward snapshot idx into o_ubar and set the adjoint convecting velocity c = -ubar
+void loadForwardSnapshot(int idx)
+{
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  char name[64];
+  std::snprintf(name, sizeof(name), "%s0.f%05d", snapBase.c_str(), idx);
+  readVelocityFile(name, o_ubar);
+  platform->linAlg->axpby(3 * Ntotal, -1.0, o_ubar, 0.0, nrs->fluid->o_Uadv); // o_Uadv = -ubar
+  opSEM::strongGradVec(nrs->meshV, Ntotal, o_ubar, o_gradUbar, true);         // grad ubar for the stretching term
+  if (platform->comm.mpiRank() == 0) std::cout << "dlLES adjoint: c = -" << name << "\n";
+}
+
+// adjoint explicit forcing in mode 2 (so far: stretching term -(grad ubar)^T uhat)
+void adjointSource(double time)
+{
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  const dlong Nl = nrs->meshV->Nlocal;
+  occa::memory o_EXT = nrs->fluid->o_EXT;
+  adjointStretching(Nl, Ntotal, -1.0, o_gradUbar, nrs->fluid->o_U, o_EXT); // EXT_i += -d_i ubar_j uhat_j
+
+  // test only: ubar = analytic initial field (snapshot 0), uhat = (0, sin x, 0)
+  static bool checked = false;
+  if (stretchCheck == 1 && !checked) {
+    checked = true;
+    platform->device.finish();
+    auto mesh = nrs->meshV;
+    std::vector<dfloat> f(3 * Ntotal);
+    o_EXT.copyTo(f.data(), 3 * Ntotal);
+    auto [x, y, z] = mesh->xyzHost();
+    double v[2] = {0.0, 0.0}; // max error, max |f|
+    for (int n = 0; n < Nl; n++) {
+      const double sx = std::sin(x[n]), cx = std::cos(x[n]);
+      const double sy = std::sin(y[n]), cy = std::cos(y[n]);
+      const double sz = std::sin(z[n]), cz = std::cos(z[n]);
+      const double fx = -sx * (sx * sy * cz + 0.2 * cx); // -sin x * d_x ubar_y
+      const double fy =  sx * cx * cy * cz;              // -sin x * d_y ubar_y
+      const double fz = -sx * cx * sy * sz;              // -sin x * d_z ubar_y
+      v[0] = std::max({v[0], std::abs(f[n] - fx), std::abs(f[n + Ntotal] - fy), std::abs(f[n + 2 * Ntotal] - fz)});
+      v[1] = std::max({v[1], std::abs(fx), std::abs(fy), std::abs(fz)});
+    }
+    MPI_Allreduce(MPI_IN_PLACE, v, 2, MPI_DOUBLE, MPI_MAX, platform->comm.mpiComm());
+    if (platform->comm.mpiRank() == 0)
+      printf("dlLES stretching check: max|f - exact| = %.3e  max|f| = %.3e  ratio = %.3e\n", v[0], v[1], v[0] / v[1]);
+  }
+}
+
+// test case only (icType = 1, adjICType = 1): compare uhat_y with exp(-nu s) sin(x + s)
+void checkAdjointAdvection(double s)
+{
+  auto mesh = nrs->meshV;
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  double nu = 0.0;
+  platform->options.getArgs("FLUID VISCOSITY", nu); // density = 1, so this is nu
+  std::vector<dfloat> U(3 * Ntotal);
+  nrs->fluid->o_U.copyTo(U.data(), 3 * Ntotal);
+  auto [x, y, z] = mesh->xyzHost();
+  const double decay = std::exp(-nu * s);
+  double v[4] = {0.0, 0.0, 0.0, 0.0}; // err vs sin(x+s), err vs sin(x-s), max|uhat_y|, max|uhat_x|+|uhat_z|
+  for (int n = 0; n < mesh->Nlocal; n++) {
+    v[0] = std::max(v[0], std::abs(U[n + Ntotal] - decay * std::sin(x[n] + s)));
+    v[1] = std::max(v[1], std::abs(U[n + Ntotal] - decay * std::sin(x[n] - s)));
+    v[2] = std::max(v[2], std::abs(U[n + Ntotal]));
+    v[3] = std::max(v[3], std::abs(U[n]) + std::abs(U[n + 2 * Ntotal]));
+  }
+  MPI_Allreduce(MPI_IN_PLACE, v, 4, MPI_DOUBLE, MPI_MAX, platform->comm.mpiComm());
+  if (platform->comm.mpiRank() == 0)
+    printf("dlLES adjoint check (s = %.3f): err vs sin(x+s) = %.3e  err vs sin(x-s) = %.3e  max|uhat_y| = %.4f  max|uhat_x|+|uhat_z| = %.2e\n",
+           s, v[0], v[1], v[2], v[3]);
+}
+
+// at t = T: J and the adjoint terminal field r = dJ/du(T)
+void finishForwardWindow()
+{
+  auto mesh = nrs->meshV;
+  const dlong Ntotal = nrs->fluid->fieldOffset;
+  const dlong Nl = mesh->Nlocal;
+
+  occa::memory o_uDNS = platform->device.malloc<dfloat>(3 * Ntotal);
+  readVelocityFile(dnsFile, o_uDNS);
+
+  std::vector<dfloat> u(3 * Ntotal), ud(3 * Ntotal), lmm(Nl), r(3 * Ntotal, 0.0);
+  nrs->fluid->o_U.copyTo(u.data(), 3 * Ntotal);
+  o_uDNS.copyTo(ud.data(), 3 * Ntotal);
+  mesh->o_LMM.copyTo(lmm.data(), Nl);
+
+  double sum[2] = {0.0, 0.0}; // J, volume
+  for (dlong n = 0; n < Nl; n++) {
+    const double w = lmm[n]; // element-local quadrature weight; sum over local nodes = volume
+    double e[3], e2 = 0.0;
+    for (int c = 0; c < 3; c++) {
+      e[c] = u[n + c * Ntotal] - ud[n + c * Ntotal];
+      e2 += e[c] * e[c];
+    }
+    sum[1] += w;
+    if (lossType == 0) {
+      sum[0] += 0.5 * w * e2;
+      for (int c = 0; c < 3; c++) r[n + c * Ntotal] = e[c];
+    } else {
+      const double s = std::sqrt(e2 + lossDelta * lossDelta);
+      sum[0] += w * s;
+      for (int c = 0; c < 3; c++) r[n + c * Ntotal] = e[c] / s;
+    }
+  }
+  MPI_Allreduce(MPI_IN_PLACE, sum, 2, MPI_DOUBLE, MPI_SUM, platform->comm.mpiComm());
+
+  occa::memory o_r = platform->device.malloc<dfloat>(3 * Ntotal);
+  o_r.copyFrom(r.data(), 3 * Ntotal);
+  writeVelocity("dlfwd/adjIC", o_r); // -> dlfwd/adjIC0.f00000
+
+  if (platform->comm.mpiRank() == 0) {
+    std::ofstream lf("loss.txt");
+    lf << std::setprecision(17) << sum[0] << "\n";
+    printf("dlLES loss: J = %.10e  volume = %.10f (expect 248.0502134424)\n", sum[0], sum[1]);
+  }
+  o_uDNS.free();
+  o_r.free();
 }
 
 void closureSource(double time)
@@ -132,9 +272,15 @@ void useric(nrs_t *nrs)
   std::vector<dfloat> U(mesh->dim * N, 0.0);
   auto [x, y, z] = mesh->xyzHost();
   for (int i = 0; i < mesh->Nlocal; i++) {
-    U[i + 0 * N] =  std::sin(x[i]) * std::cos(y[i]) * std::cos(z[i]) + 0.2 * std::sin(z[i]);
-    U[i + 1 * N] = -std::cos(x[i]) * std::sin(y[i]) * std::cos(z[i]) + 0.2 * std::sin(x[i]);
-    U[i + 2 * N] =  0.1 * std::sin(y[i]);
+    if (icType == 1) {
+      U[i + 0 * N] = 1.0;
+      U[i + 1 * N] = 0.0;
+      U[i + 2 * N] = 0.0;
+    } else {
+      U[i + 0 * N] =  std::sin(x[i]) * std::cos(y[i]) * std::cos(z[i]) + 0.2 * std::sin(z[i]);
+      U[i + 1 * N] = -std::cos(x[i]) * std::sin(y[i]) * std::cos(z[i]) + 0.2 * std::sin(x[i]);
+      U[i + 2 * N] =  0.1 * std::sin(y[i]);
+    }
   }
   nrs->fluid->o_solution().copyFrom(U.data(), U.size());
 }
@@ -145,6 +291,12 @@ void UDF_Setup0(MPI_Comm comm, setupAide &options)
   platform->par->extract("casedata", "closuretype", closureType);
   platform->par->extract("casedata", "kappa", kappa);
   options.getArgs("NUMBER TIMESTEPS", M);
+  platform->par->extract("casedata", "dnsfile", dnsFile);
+  platform->par->extract("casedata", "losstype", lossType);
+  platform->par->extract("casedata", "lossdelta", lossDelta);
+  platform->par->extract("casedata", "ictype", icType);
+  platform->par->extract("casedata", "adjictype", adjICType);
+  platform->par->extract("casedata", "stretchcheck", stretchCheck);
 }
 
 void UDF_Setup()
@@ -163,13 +315,42 @@ void UDF_Setup()
     MPI_Barrier(platform->comm.mpiComm());
     writeSnapshot(); // snapshot 0 = initial state -> dlfwd/state0.f00000
   }
+  if (dlMode == 2) {
+    o_ubar = platform->device.malloc<dfloat>(3 * Ntotal);
+    o_gradUbar = platform->device.malloc<dfloat>(9 * Ntotal);
+    nrs->fluid->o_Uadv = platform->device.malloc<dfloat>(3 * Ntotal);
+    nrs->fluid->useAdjointConvection = true; // activates the computeUrst hook
+
+    if (adjICType == 1) { // test start field uhat = (0, sin x, 0)
+      auto mesh = nrs->meshV;
+      std::vector<dfloat> U(3 * Ntotal, 0.0);
+      auto [x, y, z] = mesh->xyzHost();
+      for (int n = 0; n < mesh->Nlocal; n++) U[n + Ntotal] = std::sin(x[n]);
+      nrs->fluid->o_U.copyFrom(U.data(), 3 * Ntotal);
+    } else {
+      readVelocityFile("dlfwd/adjIC0.f00000", nrs->fluid->o_U); // uhat(T) = dJ/du(T)
+    }
+    loadForwardSnapshot(stretchCheck == 1 ? 0 : M); // step 1 uses ubar at T (snapshot 0 only for the stretching test)
+    nrs->userSource = &adjointSource;
+  }
 }
+
 
 void UDF_ExecuteStep(double time, int tstep)
 {
-  if (dlMode == 1) {
+  // nekRS (src/bin/driver.cpp) also calls this once with tstep = 0 before time-stepping: skip it,
+  // snapshot 0 is written in UDF_Setup. Then file number == tstep.
+  if (dlMode == 1 && tstep > 0) {
     writeSnapshot(); // snapshot tstep
-    if (tstep == M && platform->comm.mpiRank() == 0)
-      std::cout << "dlLES: snapshots 0.." << M << " written to " << snapBase << "\n";
+    if (tstep == M) {
+      if (platform->comm.mpiRank() == 0)
+        std::cout << "dlLES: snapshots 0.." << M << " written to " << snapBase << "\n";
+      if (!dnsFile.empty()) finishForwardWindow();
+    }
+  }
+
+  if (dlMode == 2 && tstep > 0) {
+    if (tstep < M) loadForwardSnapshot(M - tstep);          // prepares step tstep + 1
+    if (tstep == M && adjICType == 1) checkAdjointAdvection(time);
   }
 }

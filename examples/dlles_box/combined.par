@@ -4,7 +4,7 @@ userSections = CASEDATA
 polynomialOrder = 5
 dt = 1e-3
 stopAt = numSteps
-numSteps = 5
+numSteps = 100
 timeStepper = tombo2
 writeControl = steps
 writeInterval = 5
@@ -20,6 +20,11 @@ density = 1.0
 residualTol = 1e-8
 
 [CASEDATA]
-dlMode = 0
-closureType = 1
-kappa = 0.01
+dlMode = 2
+closureType = -1
+icType = 0
+adjICType = 1
+stretchCheck = 1
+#kappa = 0.01
+#dnsFile = dns/k005_0.f00001
+#lossType = 0

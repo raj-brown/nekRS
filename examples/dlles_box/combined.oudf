@@ -1,0 +1,25 @@
+@kernel void adjointStretching(const dlong N,
+                               const dlong fieldOffset,
+                               const dfloat alpha,
+                               @restrict const dfloat *gradUbar,
+                               @restrict const dfloat *uhat,
+                               @restrict dfloat *EXT) {
+  for (dlong n = 0; n < N; ++n; @tile(256, @outer, @inner)) {
+    const dfloat u0 = uhat[n + 0 * fieldOffset];
+    const dfloat u1 = uhat[n + 1 * fieldOffset];
+    const dfloat u2 = uhat[n + 2 * fieldOffset];
+    const dfloat g0 = gradUbar[n + 0 * fieldOffset];
+    const dfloat g1 = gradUbar[n + 1 * fieldOffset];
+    const dfloat g2 = gradUbar[n + 2 * fieldOffset];
+    const dfloat g3 = gradUbar[n + 3 * fieldOffset];
+    const dfloat g4 = gradUbar[n + 4 * fieldOffset];
+    const dfloat g5 = gradUbar[n + 5 * fieldOffset];
+    const dfloat g6 = gradUbar[n + 6 * fieldOffset];
+    const dfloat g7 = gradUbar[n + 7 * fieldOffset];
+    const dfloat g8 = gradUbar[n + 8 * fieldOffset];
+
+    EXT[n + 0 * fieldOffset] += alpha * (g0 * u0 + g3 * u1 + g6 * u2);
+    EXT[n + 1 * fieldOffset] += alpha * (g1 * u0 + g4 * u1 + g7 * u2);
+    EXT[n + 2 * fieldOffset] += alpha * (g2 * u0 + g5 * u1 + g8 * u2);
+  }
+}
